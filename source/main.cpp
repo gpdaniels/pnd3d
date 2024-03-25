@@ -6,6 +6,7 @@
 
 #include "brushes.hpp"
 #include "types/sprite.hpp"
+#include "types/parallelepiped.hpp"
 #include "utilities/gl.hpp"
 #include "utilities/timestamp.hpp"
 #include "utilities/window.hpp"
@@ -25,16 +26,60 @@
 static point3d ipos, irig, idow, ifor, ihaf;
 
 #define OCTMAX 256
-static oct_t oct[OCTMAX];
+static oct_t oct[OCTMAX] = {};
 static int octnum = 0;
 
 #define SPRMAX 256
-static spr_t spr[SPRMAX];
+static spr_t spr[SPRMAX] = {};
 static int sprnum = 0;
 
 static INT_PTR htex = 0;
 
 #define SURFPTR(oct,ind) (&((surf_t *)oct->sur.buf)[ind])
+static int sprord[SPRMAX];
+static float sprdep[SPRMAX];
+
+//Draw sprites in approximate front to back order .. handles clearing of screen, and all bit cover arrays
+static void drawsprites (point3d *ipos, point3d *irig, point3d *idow, point3d *ifor, bool mode)
+{
+    int i, j, k, n, y, gap;
+
+    if (oct_usegpu) ((PFNGLBLENDFUNC)glfp[glBlendFunc])(GL_ONE,GL_NONE);
+    j = 0;
+    k = spr[j].imulcol;
+    if (mode) {
+        k = ((k&0xfefefe)>>1)+(k&0xff000000);
+    }
+    oct_drawoct(spr[j].oct,&spr[j].p,&spr[j].r,&spr[j].d,&spr[j].f,spr[j].mixval,k); //spr[j].imulcol);
+
+    if (oct_usegpu) ((PFNGLBLENDFUNC)glfp[glBlendFunc])(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    n = sprnum-1;
+    for(i=sprnum-1;i>0;i--)
+    {
+        sprord[i-1] = i;
+     //sprdep[i-1] = (spr[i].p.x-ipos->x)*ifor->x + (spr[i].p.y-ipos->y)*ifor->y + (spr[i].p.z-ipos->z)*ifor->z;
+        sprdep[i-1] = (spr[i].p.x-ipos->x)*(spr[i].p.x-ipos->x) + (spr[i].p.y-ipos->y)*(spr[i].p.y-ipos->y) + (spr[i].p.z-ipos->z)*(spr[i].p.z-ipos->z);
+    }
+
+        //Draw sprites in approximate back to front order for transparency
+    for(gap=(n>>1);gap;gap>>=1)
+        for(i=0;i<n-gap;i++)
+            for(j=i;j>=0;j-=gap)
+            {
+                if (sprdep[sprord[j]] <= sprdep[sprord[j+gap]]) break;
+                k = sprord[j]; sprord[j] = sprord[j+gap]; sprord[j+gap] = k;
+            }
+    for(i=n-1;i>=0;i--)
+    {
+        j = sprord[i];
+        k = spr[j].imulcol;
+        if (mode) {
+            k = ((k&0xfefefe)>>1)+(k&0xff000000);
+        }
+        oct_drawoct(spr[j].oct,&spr[j].p,&spr[j].r,&spr[j].d,&spr[j].f,spr[j].mixval,k); //spr[j].imulcol);
+    }
+}
+
 
 int WINAPI WinMain(HINSTANCE hinst, HINSTANCE hpinst, LPSTR cmdline, int ncmdshow);
 
@@ -107,70 +152,78 @@ int WINAPI WinMain(HINSTANCE hinst, HINSTANCE hpinst, LPSTR cmdline, int ncmdsho
     octnum = 0;
     //-----------------------------------------------------------------------------------------------
 
+    int chunk_dimension = 3;
+    for (int chunk_z = 0; chunk_z < chunk_dimension; ++chunk_z) {
+        for (int chunk_y = 0; chunk_y < chunk_dimension; ++chunk_y) {
+            for (int chunk_x = 0; chunk_x < chunk_dimension; ++chunk_x) {
+
 #if 0
-    oct_load(window.xres, window.yres, &oct[octnum], "caco.kvo", &sp, &sr, &sd, &sf);
+                oct_load(window.xres, window.yres, &oct[octnum], "caco.kvo", &sp, &sr, &sd, &sf);
 #else
-    int oct_size = 7;// 11 works, 10 previous default, 7 fast.
-    oct_new(window.xres, window.yres, &oct[octnum], oct_size, 0, 0, 0, 0);
+                int oct_size = 7;// 11 works, 10 previous default, 7 fast.
+                oct_new(window.xres, window.yres, &oct[octnum], oct_size, 0, 0, 0, 0);
 
-    d = 1.0 / (double)oct[octnum].sid;
-    spr[sprnum].br.x *= d;
-    spr[sprnum].br.y *= d;
-    spr[sprnum].br.z *= d;
-    spr[sprnum].bd.x *= d;
-    spr[sprnum].bd.y *= d;
-    spr[sprnum].bd.z *= d;
-    spr[sprnum].bf.x *= d;
-    spr[sprnum].bf.y *= d;
-    spr[sprnum].bf.z *= d;
+                d = 1.0 / (double)oct[octnum].sid;
+                spr[sprnum].br.x *= d;
+                spr[sprnum].br.y *= d;
+                spr[sprnum].br.z *= d;
+                spr[sprnum].bd.x *= d;
+                spr[sprnum].bd.y *= d;
+                spr[sprnum].bd.z *= d;
+                spr[sprnum].bf.x *= d;
+                spr[sprnum].bf.y *= d;
+                spr[sprnum].bf.z *= d;
 
-    brush_sph_t sph;
-    brush_box_t box;
-    brush_cone_t cone;
+                brush_sph_t sph;
+                brush_box_t box;
+                brush_cone_t cone;
 
-    for (int i = (64 - 1); i >= 0; i--) {
-        int x = rand() & (oct[octnum].sid - 1);
-        int y = rand() & (oct[octnum].sid - 1);
-        int z = rand() & (oct[octnum].sid - 1);
-        int s = (rand() & ((oct[octnum].sid >> 4) - 1)) + (oct[octnum].sid >> 4);
+                for (int i = (64 - 1); i >= 0; i--) {
+                    int x = rand() & (oct[octnum].sid - 1);
+                    int y = rand() & (oct[octnum].sid - 1);
+                    int z = rand() & (oct[octnum].sid - 1);
+                    int s = (rand() & ((oct[octnum].sid >> 4) - 1)) + (oct[octnum].sid >> 4);
 
-        if (((float)rand() / (float)RAND_MAX) > 0.8) {
-            brush_sph_init(&sph, x, y, z, s, 1);
-            sph.col = rand() | 0xFF000000;
-            oct_mod(&oct[octnum], (brush_t*)&sph, 1 + 2);
-        }
-        else if (((float)rand() / (float)RAND_MAX) > 0.8) {
-            brush_box_init(&box, x, y, z, x+s, y+s, z+s, 1);
-            box.col = rand() | 0xFF000000;
-            oct_mod(&oct[octnum], (brush_t*)&box, 1 + 2);
-        }
-        else {
-            brush_cone_init(&cone, x, y, z, 1, x, y+s, z, 5);
-            cone.col = rand() | 0xFF000000;
-            oct_mod(&oct[octnum], (brush_t*)&cone, 1 + 2);
-        }
-    }
+                    if (((float)rand() / (float)RAND_MAX) > 0.8) {
+                        brush_sph_init(&sph, x, y, z, s, 1);
+                        sph.col = rand() | 0xFF000000;
+                        oct_mod(&oct[octnum], (brush_t*)&sph, 1 + 2);
+                    }
+                    else if (((float)rand() / (float)RAND_MAX) > 0.8) {
+                        brush_box_init(&box, x, y, z, x+s, y+s, z+s, 1);
+                        box.col = rand() | 0xFF000000;
+                        oct_mod(&oct[octnum], (brush_t*)&box, 1 + 2);
+                    }
+                    else {
+                        brush_cone_init(&cone, x, y, z, 1, x, y+s, z, 5);
+                        cone.col = rand() | 0xFF000000;
+                        oct_mod(&oct[octnum], (brush_t*)&cone, 1 + 2);
+                    }
+                }
 #endif
 
-    oct[octnum].tilid = 0;
-    spr[sprnum].mixval = 0.5;
-    spr[sprnum].imulcol = 0xff404040;
-    spr[sprnum].oct = &oct[octnum];
-    d = 1.0 / (double)oct[octnum].sid;
-    spr[sprnum].p.x = -.5;
-    spr[sprnum].p.y = -.5;
-    spr[sprnum].p.z = -.5;
-    spr[sprnum].r.x = d;
-    spr[sprnum].r.y = 0;
-    spr[sprnum].r.z = 0;
-    spr[sprnum].d.x = 0;
-    spr[sprnum].d.y = d;
-    spr[sprnum].d.z = 0;
-    spr[sprnum].f.x = 0;
-    spr[sprnum].f.y = 0;
-    spr[sprnum].f.z = d;
-    sprnum++;
-    octnum++;
+                oct[octnum].tilid = 0;
+                spr[sprnum].mixval = 0.5;
+                spr[sprnum].imulcol = 0xff404040;
+                spr[sprnum].oct = &oct[octnum];
+                d = 1.0 / (double)oct[octnum].sid;
+                spr[sprnum].p.x = static_cast<double>(chunk_x) - static_cast<double>(chunk_dimension) / 2.0;
+                spr[sprnum].p.y = static_cast<double>(chunk_y) - static_cast<double>(chunk_dimension) / 2.0;
+                spr[sprnum].p.z = static_cast<double>(chunk_z) - static_cast<double>(chunk_dimension) / 2.0;
+                spr[sprnum].r.x = d;
+                spr[sprnum].r.y = 0;
+                spr[sprnum].r.z = 0;
+                spr[sprnum].d.x = 0;
+                spr[sprnum].d.y = d;
+                spr[sprnum].d.z = 0;
+                spr[sprnum].f.x = 0;
+                spr[sprnum].f.y = 0;
+                spr[sprnum].f.z = d;
+                sprnum++;
+                octnum++;
+            }
+        }
+    }
     //-----------------------------------------------------------------------------------------------
 
     // Clip cursor to window
@@ -330,10 +383,8 @@ int WINAPI WinMain(HINSTANCE hinst, HINSTANCE hpinst, LPSTR cmdline, int ncmdsho
         //Set window for drawing (handles both DirectDraw/OpenGL)
         if (oct_startdraw(window, &ipos,&irig,&idow,&ifor,ihaf.x,ihaf.y,ihaf.z) >= 0)
         {
-                //Draw sprites
-            for(int i=0;i<sprnum;i++) {
-                oct_drawoct(spr[i].oct,&spr[i].p,&spr[i].r,&spr[i].d,&spr[i].f,spr[i].mixval,spr[i].imulcol);
-            }
+            //Draw sprites in order
+            drawsprites(&ipos,&irig,&idow,&ifor,false);
 
             oct_drawtext6x8(window.xres, window.yres, (window.xres>>1)-3,(window.yres>>1)-4,0xffffffff,0,"o");
             oct_drawline(window.xres, window.yres, window.xres-68, 0,window.xres-68,10,0xffc0c0c0);
