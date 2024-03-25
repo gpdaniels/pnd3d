@@ -326,9 +326,6 @@ static void oct_refreshnorms_mt (int i, void *_)
             psurf->norm[1] = (signed char)(norm.y*127.0);
             psurf->norm[2] = (signed char)(norm.z*127.0);
 
-            if constexpr (oct_usegpu && oct_usegpubo) {
-                memcpy(&rn->loct->gsurf[i],psurf,rn->loct->sur.siz);
-            }
             goto tosibly;
         }
 
@@ -351,12 +348,6 @@ void oct_refreshnorms (oct_t *loct, int dist, int x0, int y0, int z0, int x1, in
     static oct_rn_t octrn[1<<(LXSIZ+LYSIZ+LZSIZ)];
     int i, x, y, z;
 
-    if constexpr (oct_usegpu && oct_usegpubo) {
-        if (!loct->gsurf) {
-            loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-        }
-    }
-
     i = 0;
     for(x=(1<<LXSIZ)-1;x>=0;x--) {
         for(y=(1<<LYSIZ)-1;y>=0;y--) {
@@ -373,11 +364,6 @@ void oct_refreshnorms (oct_t *loct, int dist, int x0, int y0, int z0, int x1, in
         }
     }
     htrun(oct_refreshnorms_mt,octrn,0,1<<(LXSIZ+LYSIZ+LZSIZ),true);
-
-    if constexpr (oct_usegpu && oct_usegpubo) {
-        ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-        ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,0,0,loct->gxsid,(loct->sur.mal*2)>>loct->glxsid,GL_RGBA,GL_UNSIGNED_BYTE,(void *)loct->sur.buf);
-    }
 }
 
 //NOTE:x0,etc. must be filled with bounded box to check on input. For whole object, set x0=0; x1=loct->sid; etc..

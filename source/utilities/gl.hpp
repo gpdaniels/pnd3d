@@ -844,14 +844,6 @@ static void kglalloctex (int itex, void *p, int xs, int ys, int zs, int icoltype
         }
     }
 
-    if constexpr (oct_usegpubo) {
-        if (!glfp[glBindBuffer]) {
-            fprintf(stderr, "glBindBuffer() not supported .. enjoy the impending crash.\n");
-            std::abort();
-        }
-        ((PFNGLBINDBUFFER)glfp[glBindBuffer])(GL_PIXEL_UNPACK_BUFFER, 0); //MUST unbind buffer object here, before usage of kglalloctex!
-    }
-
     //glEnable(targ);
     ((PFNGLBINDTEXTURE)glfp[glBindTexture])(targ,itex);
     switch (icoltype&0xf0)

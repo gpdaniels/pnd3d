@@ -28,34 +28,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-static void compileshader (int shad, const char *vshadst, const char *fshadst, const char *shadnam)
-{
-    if ((unsigned)shad >= (unsigned)SHADNUM) {
-        fprintf(stderr, "Shader '%s' has an invalid index: %d out of %d\n", shadnam, shad, SHADNUM);
-        std::abort();
-    }
-
-    if constexpr (oct_useglsl)
-    {
-        compileshaderGLSL(vshadst, fshadst, shadvert[shad], shadfrag[shad], shadprog[shad]);
-
-        ((PFNGLUSEPROGRAMPROC)glfp[glUseProgram])(shadprog[shad]);
-
-        //Note: Get*Uniform*() must be called after ((PFNGLUSEPROGRAM)glfp[glUseProgram])() to work properly
-        ((PFNGLUNIFORM1IPROC)glfp[glUniform1i])(((PFNGLGETUNIFORMLOCATIONPROC)glfp[glGetUniformLocation])(shadprog[shad],"tex0"),0);
-        ((PFNGLUNIFORM1IPROC)glfp[glUniform1i])(((PFNGLGETUNIFORMLOCATIONPROC)glfp[glGetUniformLocation])(shadprog[shad],"tex1"),1);
-        ((PFNGLUNIFORM1IPROC)glfp[glUniform1i])(((PFNGLGETUNIFORMLOCATIONPROC)glfp[glGetUniformLocation])(shadprog[shad],"tex2"),2);
-        ((PFNGLUNIFORM1IPROC)glfp[glUniform1i])(((PFNGLGETUNIFORMLOCATIONPROC)glfp[glGetUniformLocation])(shadprog[shad],"tex3"),3);
-    }
-    else {
-        compileshaderASM(vshadst, fshadst, shadvert[shad], shadfrag[shad]);
-    }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
 int oct_initonce (HWND ghwnd, float zfar)
 {
     int x, y, xsiz, ysiz;
@@ -63,70 +35,13 @@ int oct_initonce (HWND ghwnd, float zfar)
 
     gzfar = zfar;
     gznear = zfar * (1.0/8388608.0);
-
-    if constexpr (oct_usegpu) {
-        if (kglinit(ghwnd, swapinterval, &glhDC,&glhRC) < 0) {
-            std::abort();
-        }
-
-        shaderfunc = 0;
-        if constexpr (oct_useglsl)
-        {
-            compileshader(0,vshad_drawoct ,fshad_drawoct ,"drawoct");
-            compileshader(2,vshad_drawsky ,fshad_drawsky ,"drawsky");
-            compileshader(3,vshad_drawtext,fshad_drawtext,"drawtext");
-        }
-        else
-        {
-            compileshader(0,vshadasm_drawoct ,fshadasm_drawoct ,"drawoct");
-            compileshader(2,vshadasm_drawsky ,fshadasm_drawsky ,"drawsky");
-            compileshader(3,vshadasm_drawtext,fshadasm_drawtext,"drawtext");
-        }
-        shadcur = 0;
-
-        //Allocate screen texture for pass 1->2 transfer
-        ((PFNGLGENTEXTURES)glfp[glGenTextures])(1,&gpixtexid);
-        //only NEAREST makes sense here! (allocate stuff here)
-        kglalloctex(gpixtexid,0,(gpixxdim*PIXBUFBYPP)>>2,gpixydim,1,KGL_RGBA32+KGL_NEAREST);
-        if constexpr (oct_usegpubo) {
-            ((PFNGLGENBUFFERS)glfp[glGenBuffers])(1,&gpixbufid);
-        }
-
-        //Load 6x8(x256) font
-        xsiz = 8; ysiz = 8*256;
-        cbuf = (char *)malloc(xsiz*ysiz);
-        if (!cbuf) {
-            return(-1);
-        }
-        memset(cbuf,0,xsiz*ysiz);
-        for(y=0,cptr=cbuf;y<ysiz;y++,cptr+=xsiz) {
-            for(x=0;x<6;x++) {
-                if (((char *)font6x8)[(y>>3)*6+x]&(1<<(y&7))) {
-                    cptr[x] = 255;
-                }
-            }
-        }
-        ((PFNGLGENTEXTURES)glfp[glGenTextures])(1,&gfont6x8id);
-        kglalloctex(gfont6x8id,cbuf,xsiz,ysiz,1,KGL_CHAR+KGL_NEAREST);
-        free((void *)cbuf);
-
-        //Allocate buffer for oct_drawtext6x8()
-        ((PFNGLGENTEXTURES)glfp[glGenTextures])(1,&gtextbufid);
-        kglalloctex(gtextbufid,0,TXTBUFSIZ,1,1,KGL_CHAR+KGL_NEAREST);
-    }
-    else {
-        shaderfunc = cpu_shader_texmap;
-    }
+    shaderfunc = cpu_shader_texmap;
 
     return(0);
 }
 
 void oct_uninitonce(HWND ghwnd)
 {
-    if constexpr (oct_usegpu) {
-        kgluninit(ghwnd,glhDC,glhRC);
-        DestroyWindow(ghwnd);
-    }
 }
 
 void oct_new (int xres, int yres, oct_t *loct, int los, INT_PTR tilid, int startnodes, int startsurfs, int hax4mark2spr)
@@ -182,27 +97,6 @@ void oct_new (int xres, int yres, oct_t *loct, int los, INT_PTR tilid, int start
 
     if (startsurfs) loct->sur.mal = startsurfs; else if (los <= 10) loct->sur.mal = (8<<(los<<1)); else loct->sur.mal = 16777216;
     loct->sur.siz = sizeof(surf_t);
-    if constexpr (oct_usegpu)
-    {
-        i = bsr(loct->sur.mal-1)+1;
-        i += bsr((loct->sur.siz>>2)-1)+1;
-        loct->glxsid = ((i+0)>>1);
-        loct->glysid = ((i+1)>>1);
-        loct->gxsid = (1<<loct->glxsid);
-        loct->gysid = (1<<loct->glysid);
-        loct->sur.mal = loct->gxsid*loct->gysid/(loct->sur.siz>>2);
-
-        loct->tilid = tilid;
-        ((PFNGLGENTEXTURES)glfp[glGenTextures])(1,&loct->octid);
-        loct->gsurf = 0;
-        if (!hax4mark2spr)
-        {
-            kglalloctex(loct->octid,0,loct->gxsid,loct->gysid,1,KGL_RGBA32+KGL_NEAREST); //only NEAREST makes sense here!
-            if constexpr (oct_usegpubo) {
-                loct->bufid = bo_init(loct->gxsid*loct->gysid*4);
-            }
-        }
-    }
     loct->sur.buf = (octv_t *)malloc(loct->sur.mal*loct->sur.siz);
     loct->sur.num = 1; loct->sur.ind = 1;
     if (!hax4mark2spr)
@@ -337,15 +231,6 @@ void oct_dup (oct_t *ooct, oct_t *noct)
 
 void oct_free (oct_t *loct)
 {
-    if constexpr (oct_usegpu && oct_usegpubo) {
-        if (loct->gsurf)
-        {
-            loct->gsurf = 0;
-            ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-            bo_end(loct->bufid,0,0,0,0,GL_RGBA,GL_UNSIGNED_BYTE,0);
-        }
-        ((PFNGLDELETEBUFFERS)glfp[glDeleteBuffers])(1,&loct->bufid);
-    }
     if (loct->sur.bit) free(loct->sur.bit);
     if (loct->sur.buf) free(loct->sur.buf);
     if (loct->nod.bit) free(loct->nod.bit);

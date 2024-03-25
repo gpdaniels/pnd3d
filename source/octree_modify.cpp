@@ -33,13 +33,6 @@ void oct_mod (oct_t *loct, brush_t *brush, int mode)
 {
     //temp needed in case bitalloc() realloc's nod.buf
     octv_t nnode;
-
-    if constexpr (oct_usegpu && oct_usegpubo) {
-        if (!loct->gsurf) {
-            loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-        }
-    }
-
     brush->mx0 = 0x7fffffff; brush->mx1 = 0x80000000;
     brush->my0 = 0x7fffffff; brush->my1 = 0x80000000;
     brush->mz0 = 0x7fffffff; brush->mz1 = 0x80000000;
@@ -51,11 +44,6 @@ void oct_mod (oct_t *loct, brush_t *brush, int mode)
     if (mode&8) { int i = (mode&1)^1; oct_refreshnorms(loct,2,brush->mx0-i,brush->my0-i,brush->mz0-i,brush->mx1+i,brush->my1+i,brush->mz1+i); }
 
     oct_checkreducesizes(loct);
-
-    if constexpr (oct_usegpu && !oct_usegpubo) {
-        ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-        ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,0,0,loct->gxsid,(loct->sur.mal*2)>>loct->glxsid,GL_RGBA,GL_UNSIGNED_BYTE,(void *)loct->sur.buf);
-    }
 }
 
 void oct_paint (oct_t *loct, brush_t *brush)
@@ -64,16 +52,6 @@ void oct_paint (oct_t *loct, brush_t *brush)
     stk_t stk[OCT_MAXLS];
     octv_t *ptr;
     int i, j, ls, s, x, y, z, nx, ny, nz, ind;
-
-    if constexpr (oct_usegpu) {
-        if constexpr (oct_usegpubo) {
-            if (!loct->gsurf) loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-        }
-        else {
-            ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-        }
-    }
-
     ls = loct->lsid-1; s = (1<<ls); ptr = &((octv_t *)loct->nod.buf)[loct->head];
     x = 0; y = 0; z = 0; j = 8-1;
     while (1)
@@ -95,14 +73,6 @@ void oct_paint (oct_t *loct, brush_t *brush)
         ind = popcount8(ptr->chi&(i-1)) + ptr->ind;
 
         brush->getsurf(brush,nx,ny,nz,&((surf_t *)loct->sur.buf)[ind]);
-        if constexpr (oct_usegpu) {
-            if constexpr (oct_usegpubo) {
-                memcpy(&loct->gsurf[ind],&((surf_t *)loct->sur.buf)[ind],loct->sur.siz);
-            }
-            else {
-                ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,(ind&((loct->gxsid>>1)-1))<<1,ind>>(loct->glysid-1),2,1,GL_RGBA,GL_UNSIGNED_BYTE,(void *)&((surf_t *)loct->sur.buf)[ind]);
-            }
-        }
 
 tosibly:;
         j--; if (j >= 0) continue;
@@ -116,27 +86,10 @@ break2:;
 void oct_writesurf (oct_t *loct, int ind, surf_t *psurf)
 {
     memcpy(&((surf_t *)loct->sur.buf)[ind],psurf,loct->sur.siz);
-    if constexpr (oct_usegpu) {
-        if constexpr (oct_usegpubo) {
-            if (!loct->gsurf) {
-                loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-            }
-            memcpy(&loct->gsurf[ind],psurf,loct->sur.siz);
-        }
-        else {
-            ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-            ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,(ind&((loct->gxsid>>1)-1))<<1,ind>>(loct->glysid-1),2,1,GL_RGBA,GL_UNSIGNED_BYTE,(void *)&((surf_t *)loct->sur.buf)[ind]);
-        }
-    }
 }
 
 void oct_copysurfs (oct_t *loct)
 {
-    if constexpr (oct_usegpu && oct_usegpubo)
-    {
-        if (!loct->gsurf) loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-        memcpy(loct->gsurf,loct->sur.buf,loct->sur.mal*loct->sur.siz);
-    }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -707,21 +660,6 @@ break2:;
     bm->ind = bm->num;
 
     free(popcountlut);
-
-    if constexpr (oct_usegpu) {
-        if (issur) {
-            if constexpr (oct_usegpubo) {
-                if (!loct->gsurf) {
-                    loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-                }
-                memcpy(loct->gsurf,loct->sur.buf,loct->sur.num*loct->sur.siz);
-            }
-            else {
-                ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-                ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,0,0,loct->gxsid,(loct->sur.num*2+loct->gxsid-1)>>loct->glxsid,GL_RGBA,GL_UNSIGNED_BYTE,(void *)loct->sur.buf);
-            }
-        }
-    }
 }
 
 void oct_checkreducesizes (oct_t *loct)
@@ -739,34 +677,6 @@ void oct_checkreducesizes (oct_t *loct)
         loct->sur.mal >>= 1; //halve space
         loct->sur.buf = (octv_t       *)realloc(loct->sur.buf,   (int64_t)loct->sur.mal*loct->sur.siz);
         loct->sur.bit = (unsigned int *)realloc(loct->sur.bit,((((int64_t)loct->sur.mal+63)>>5)<<2)+16);
-        if constexpr (oct_usegpu)
-        {
-            if constexpr (oct_usegpubo) {
-                if (loct->gsurf)
-                {
-                    loct->gsurf = 0;
-                    ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-                    bo_end(loct->bufid,0,0,0,0,GL_RGBA,GL_UNSIGNED_BYTE,0);
-                }
-                ((PFNGLDELETEBUFFERS)glfp[glDeleteBuffers])(1,&loct->bufid);
-            }
-
-            if (loct->glxsid > loct->glysid) loct->glxsid--; else loct->glysid--;
-            loct->gxsid = (1<<loct->glxsid);
-            loct->gysid = (1<<loct->glysid);
-            loct->sur.mal = loct->gxsid*loct->gysid/(sizeof(surf_t)>>2);
-            kglalloctex(loct->octid,0,loct->gxsid,loct->gysid,1,KGL_RGBA32+KGL_NEAREST); //only NEAREST makes sense here!
-
-            if constexpr (oct_usegpubo) {
-                loct->bufid = bo_init(loct->gxsid*loct->gysid*4);
-                loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-                memcpy(loct->gsurf,loct->sur.buf,loct->sur.num*loct->sur.siz);
-            }
-            else {
-                ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-                ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,0,0,loct->gxsid,(loct->sur.num*2+loct->gxsid-1)>>loct->glxsid,GL_RGBA,GL_UNSIGNED_BYTE,(void *)loct->sur.buf);
-            }
-        }
     }
 }
 
@@ -967,20 +877,7 @@ static void oct_mark2spr (oct_t *loct, oct_t *newoct, int inode, int ls, octv_t 
         }
 
         if (newoct->sur.num+n > newoct->sur.mal) {
-            if constexpr (oct_usegpu) {
-                //grow space by 100%
-                if (newoct->glxsid < newoct->glysid) {
-                    newoct->glxsid++; newoct->gxsid <<= 1;
-                }
-                else {
-                    newoct->glysid++; newoct->gysid <<= 1;
-                }
-                newoct->sur.mal <<= 1;
-            }
-            else {
-                newoct->sur.mal = std::max(((1<<bsr(newoct->sur.mal))>>2) + newoct->sur.mal,newoct->sur.num+n); //grow space by ~25%
-            }
-
+            newoct->sur.mal = std::max(((1<<bsr(newoct->sur.mal))>>2) + newoct->sur.mal,newoct->sur.num+n); //grow space by ~25%
             newoct->sur.buf = (octv_t       *)realloc(newoct->sur.buf,   (int64_t)newoct->sur.mal*newoct->sur.siz);
         }
         roct->ind = newoct->sur.num; newoct->sur.num += n; //simple allocator (don't need bitalloc since no deallocation)
@@ -1076,20 +973,6 @@ ohc_restart:;
                     setzrange1(newoct.sur.bit,             0,newoct.sur.num);
                     setzrange0(newoct.sur.bit,newoct.sur.num,newoct.sur.mal);
 
-                    if constexpr (oct_usegpu)
-                    {
-                        kglalloctex(newoct.octid,0,newoct.gxsid,newoct.gysid,1,KGL_RGBA32+KGL_NEAREST); //only NEAREST makes sense here!
-
-                        if constexpr (oct_usegpubo) {
-                            newoct.bufid = bo_init(newoct.gxsid*newoct.gysid*4);
-                            newoct.gsurf = (surf_t *)bo_begin(newoct.bufid,0);
-                            memcpy(newoct.gsurf,newoct.sur.buf,newoct.sur.num*newoct.sur.siz);
-                        }
-                        else {
-                            ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,newoct.octid);
-                            ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,0,0,newoct.gxsid,(newoct.sur.num*2+newoct.gxsid-1)>>newoct.glxsid,GL_RGBA,GL_UNSIGNED_BYTE,(void *)newoct.sur.buf);
-                        }
-                    }
                     recvoctfunc(loct,&newoct);
                 }
                 oct_removemrks(loct,loct->head,loct->lsid-1,&nnode);
@@ -1178,40 +1061,8 @@ static int bitalloc (oct_t *loct, bitmal_t *bm, int n)
 
     i = bm->mal;
 
-    //Only surf needs to do GPU stuff :P
-    if ((oct_usegpu) && (&loct->sur == bm)) {
-        //grow space by 100%
-        if constexpr (oct_usegpubo) {
-            if (loct->gsurf)
-            {
-                loct->gsurf = 0;
-                ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-                bo_end(loct->bufid,0,0,0,0,GL_RGBA,GL_UNSIGNED_BYTE,0);
-            }
-            ((PFNGLDELETEBUFFERS)glfp[glDeleteBuffers])(1,&loct->bufid);
-        }
-
-        if (loct->glxsid < loct->glysid) loct->glxsid++; else loct->glysid++;
-        loct->gxsid = (1<<loct->glxsid);
-        loct->gysid = (1<<loct->glysid);
-        bm->mal = loct->gxsid*loct->gysid/(sizeof(surf_t)>>2);
-        //only NEAREST makes sense here!
-        kglalloctex(loct->octid,0,loct->gxsid,loct->gysid,1,KGL_RGBA32+KGL_NEAREST);
-
-        if constexpr (oct_usegpubo) {
-            loct->bufid = bo_init(loct->gxsid*loct->gysid*4);
-            loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-            memcpy(loct->gsurf,bm->buf,i*bm->siz);
-        }
-        else {
-            ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-            ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,0,0,loct->gxsid,(i*2)>>loct->glxsid,GL_RGBA,GL_UNSIGNED_BYTE,(void *)bm->buf);
-        }
-    }
-    else {
-        //grow space by ~25%
-        bm->mal = std::max(((1<<bsr(bm->mal))>>2) + bm->mal,bm->mal+n);
-    }
+    //grow space by ~25%
+    bm->mal = std::max(((1<<bsr(bm->mal))>>2) + bm->mal,bm->mal+n);
 
     bm->buf = (octv_t       *)realloc(bm->buf,   (int64_t)bm->mal*bm->siz);        if (!bm->buf) { fprintf(stderr, "realloc(bm->buf,%lld) failed\n",   (long long)bm->mal*bm->siz);        }
     bm->bit = (unsigned int *)realloc(bm->bit,((((int64_t)bm->mal+63)>>5)<<2)+16); if (!bm->bit) { fprintf(stderr, "realloc(bm->bit,%lld) failed\n",((((long long)bm->mal+63)>>5)<<2)+16); }
@@ -1280,9 +1131,6 @@ static int oct_refreshsurf (oct_t *loct, int ind, int o, int n, surf_t *surf)
     {
         //memcpy(&((octv_t *)bm->buf)[ind],surf,n*bm->siz);
         memcpy(&((surf_t *)bm->buf)[ind],surf,n*bm->siz); //FIXFIXFIXFIX::? ????
-        if constexpr (oct_usegpu && oct_usegpubo) {
-            memcpy(&loct->gsurf[ind],surf,n*bm->siz);
-        }
     }
     return(ind);
 }
@@ -1382,9 +1230,6 @@ void oct_modnew (oct_t *loct, brush_t *brush, int mode)
     octv_t nnode;
 
     oct_new(loct->xres, loct->yres, &newoct,loct->lsid,loct->tilid,256,256,0);
-    if constexpr (oct_usegpu && oct_usegpubo) {
-        if (!newoct.gsurf) newoct.gsurf = (surf_t *)bo_begin(newoct.bufid,0);
-    }
 
     brush->mx0 = 0x7fffffff; brush->mx1 = 0x80000000;
     brush->my0 = 0x7fffffff; brush->my1 = 0x80000000;
@@ -1647,12 +1492,6 @@ void oct_updatesurfs (oct_t *loct, int mx0, int my0, int mz0, int mx1, int my1, 
     oct_updatesurfs_t ous;
     octv_t nnode;
 
-    if constexpr (oct_usegpu && oct_usegpubo) {
-        if (!loct->gsurf) {
-            loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-        }
-    }
-
     ous.loct = loct; ous.mode = mode;
     ous.mx0 = std::max(mx0,0); ous.mx1 = std::min(mx1,loct->sid);
     ous.my0 = std::max(my0,0); ous.my1 = std::min(my1,loct->sid);
@@ -1788,10 +1627,6 @@ void oct_swizzle (oct_t *loct, int ax0, int ax1, int ax2)
     if ((labs(ax0) > 3) || (labs(ax1) > 3) || (labs(ax2) > 3)) return;
     if ((labs(ax0) == labs(ax1)) || (labs(ax0) == labs(ax2)) || (labs(ax1) == labs(ax2))) return;
 
-    if constexpr (oct_usegpu && oct_usegpubo) {
-        if (!loct->gsurf) loct->gsurf = (surf_t *)bo_begin(loct->bufid,0);
-    }
-
     osr.loct = loct;
     switch(labs(ax0))
     {
@@ -1811,16 +1646,6 @@ void oct_swizzle (oct_t *loct, int ax0, int ax1, int ax2)
     }
 
     oct_swizzle_recur(&osr,loct->head,loct->lsid-1);
-
-    if constexpr (oct_usegpu) {
-        if constexpr (oct_usegpubo) {
-            memcpy(loct->gsurf,loct->sur.buf,loct->sur.mal*loct->sur.siz);
-        }
-        else {
-            ((PFNGLBINDTEXTURE)glfp[glBindTexture])(GL_TEXTURE_2D,loct->octid);
-            ((PFNGLTEXSUBIMAGE2D)glfp[glTexSubImage2D])(GL_TEXTURE_2D,0,0,0,loct->gxsid,(loct->sur.mal*2)>>loct->glxsid,GL_RGBA,GL_UNSIGNED_BYTE,(void *)loct->sur.buf);
-        }
-    }
 }
 
 //                                      nsol:
