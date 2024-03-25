@@ -1,0 +1,2500 @@
+/*
+Copyright (C) 2018-2024 Geoffrey Daniels. https://gpdaniels.com/
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, version 3 of the License only.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#pragma once
+#ifndef GTL_IO_WINDOW_HPP
+#define GTL_IO_WINDOW_HPP
+
+#ifndef NDEBUG
+#   if defined(_MSC_VER)
+#       define __builtin_trap() __debugbreak()
+#   endif
+/// @brief A simple assert macro to break the program if the window is misused.
+#   define GTL_WINDOW_ASSERT(ASSERTION, MESSAGE) static_cast<void>((ASSERTION) || (__builtin_trap(), 0))
+#else
+/// @brief At release time the assert macro is implemented as a nop.
+#   define GTL_WINDOW_ASSERT(ASSERTION, MESSAGE) static_cast<void>(0)
+#endif
+
+// For linux.
+#if defined(linux) || defined(__linux) || defined(__linux__)
+
+#   include <X11/Xlib.h>
+#   include <X11/Xatom.h>
+#   include <X11/Xutil.h>
+#   include <X11/keysym.h>
+#   include <X11/cursorfont.h>
+
+#   include <GL/glx.h>
+#   include <GL/gl.h>
+
+//  These pragma lines are read by the cmake build script to add them as linker flags.
+#   pragma comment(CMAKE_LINKER_FLAG_LINUX, "-lX11")
+#   pragma comment(CMAKE_LINKER_FLAG_LINUX, "-lGL")
+
+#endif
+
+// For windows.
+#if defined(_WIN32)
+
+#   if defined(_MSC_VER)
+#       pragma warning(push, 0) 
+#   endif
+
+#   define WIN32_LEAN_AND_MEAN
+#   define VC_EXTRALEAN
+#   define STRICT
+
+#   include <sdkddkver.h>
+
+#   if defined(_AFXDLL)
+#       include <afxwin.h>
+#   else
+#       include <Windows.h>
+#   endif
+
+#   include <gl/GL.h>
+
+#   include <deque>
+
+#   if defined(_MSC_VER)
+#       pragma warning(pop) 
+#   endif
+
+//  This pragma line is handled by the msvc compiler to add it as a linker flag.
+#   pragma comment(lib, "opengl32")
+
+#endif
+
+// For mac.
+#if defined(__APPLE__)
+
+#   include <objc/objc.h>
+#   include <objc/runtime.h>
+#   include <objc/message.h>
+#   include <objc/NSObjCRuntime.h>
+#   include <OpenGL/gl.h>
+#   include <OpenGL/glu.h>
+#   include <CoreGraphics/CGBase.h>
+#   include <CoreGraphics/CGGeometry.h>
+
+#   include <climits>
+#   include <cmath>
+#   include <cstdio>
+#   include <deque>
+#   include <unordered_map>
+
+#   ifdef __arm64__
+#       define abi_objc_msgSend_stret objc_msgSend
+#   else
+#       define abi_objc_msgSend_stret objc_msgSend_stret
+#   endif
+#   ifdef __i386__
+#       define abi_objc_msgSend_fpret objc_msgSend_fpret
+#   else
+#       define abi_objc_msgSend_fpret objc_msgSend
+#   endif
+
+    extern id NSApp;
+    extern id const NSDefaultRunLoopMode;
+
+    namespace {
+        template <typename map_type>
+        struct get_key_type final {
+            using key_type = map_type;
+            static map_type forward(key_type key) {
+                return key;
+            }
+        };
+
+        template <>
+        struct get_key_type<Class> final {
+            using key_type = const char* const;
+            static Class forward(key_type key) {
+                return objc_getClass(key);
+            }
+        };
+        template <>
+        struct get_key_type<SEL> final {
+            using key_type = const char* const;
+            static SEL forward(key_type key) {
+                return sel_registerName(key);
+            }
+        };
+
+        template <typename function_type>
+        struct msg;
+
+        template <typename return_type, typename ... argument_types>
+        struct msg<return_type(argument_types...)> final {
+            static return_type send(argument_types... arguments) {
+                using function_type = return_type (*)(argument_types...);
+                return reinterpret_cast<function_type>(objc_msgSend)(arguments...);
+            }
+            static return_type send(typename get_key_type<argument_types>::key_type... arguments) {
+                using function_type = return_type (*)(argument_types...);
+                return reinterpret_cast<function_type>(objc_msgSend)(get_key_type<argument_types>::forward(arguments)...);
+            }
+        };
+
+        template <typename ... argument_types>
+        struct msg<CGRect(argument_types...)> final {
+            static CGRect send(argument_types... arguments) {
+                using function_type = CGRect (*)(argument_types...);
+                return reinterpret_cast<function_type>(abi_objc_msgSend_stret)(arguments...);
+            }
+            static CGRect send(typename get_key_type<argument_types>::key_type... arguments) {
+                using function_type = CGRect (*)(argument_types...);
+                return reinterpret_cast<function_type>(abi_objc_msgSend_stret)(get_key_type<argument_types>::forward(arguments)...);
+            }
+        };
+
+        template <typename ... argument_types>
+        struct msg<CGFloat(argument_types...)> final {
+            static CGFloat send(argument_types... arguments) {
+                using function_type = CGFloat (*)(argument_types...);
+                return reinterpret_cast<function_type>(abi_objc_msgSend_fpret)(arguments...);
+            }
+            static CGFloat send(typename get_key_type<argument_types>::key_type... arguments) {
+                using function_type = CGFloat (*)(argument_types...);
+                return reinterpret_cast<function_type>(abi_objc_msgSend_fpret)(get_key_type<argument_types>::forward(arguments)...);
+            }
+        };
+    }
+
+//  These pragma lines are read by the cmake build script to add them as linker flags.
+#   pragma comment(CMAKE_LINKER_FLAG_DARWIN, "-framework Cocoa")
+#   pragma comment(CMAKE_LINKER_FLAG_DARWIN, "-framework OpenGL")
+#   pragma comment(CMAKE_LINKER_FLAG_DARWIN, "-framework Foundation")
+#   pragma comment(CMAKE_LINKER_FLAG_DARWIN, "-framework AppKit")
+
+#endif
+
+#if !defined(GL_MAJOR_VERSION)
+#   define GL_MAJOR_VERSION 0x821B
+#endif
+#if !defined(GL_MINOR_VERSION)
+#   define GL_MINOR_VERSION 0x821C
+#endif
+
+#if defined(_MSC_VER)
+#   pragma warning(push, 0)
+#endif
+
+#include <string>
+#include <unordered_set>
+#include <utility>
+
+#if defined(_MSC_VER)
+#   pragma warning(pop)
+#endif
+
+namespace gtl {
+    class window final {
+    public:
+        class manager final {
+        public:
+            friend class window;
+
+        private:
+            inline static std::unordered_set<window*> windows;
+
+        private:
+            ~manager() = delete;
+            manager() = delete;
+
+        private:
+            static void add_window(window* new_window) {
+                manager::windows.insert(new_window);
+            }
+
+            static void remove_window(window* old_window) {
+                manager::windows.erase(old_window);
+            }
+
+        public:
+            static bool any_created() {
+                return !manager::windows.empty();
+            }
+
+            static bool any_open() {
+                for (const window* current_window : manager::windows) {
+                    if (current_window->is_open()) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            static std::size_t count_created() {
+                return manager::windows.size();
+            }
+
+            static unsigned int count_open() {
+                unsigned int result = 0;
+                for (const window* current_window : manager::windows) {
+                    if (current_window->is_open()) {
+                        ++result;
+                    }
+                }
+                return result;
+            }
+
+            static void process_all() {
+                for (window* current_window : manager::windows) {
+                    event_type event;
+                    while (current_window->process(event));
+                }
+            }
+
+            static void prepare_and_draw_all(void(*draw_function)(const window&)) {
+                for (window* current_window : manager::windows) {
+                    current_window->prepare();
+                    draw_function(*current_window);
+                }
+            }
+
+            static void present_all() {
+                for (window* current_window : manager::windows) {
+                    current_window->present();
+                }
+            }
+
+            static void process_and_present_all() {
+                manager::process_all();
+                manager::present_all();
+            }
+        };
+
+    public:
+        class event_type final {
+        public:
+            enum class input_type {
+                configuration, focus, key_press, key_release, mouse_press, mouse_release, mouse_scroll, mouse_move
+            };
+
+            struct configuration_type {
+                int x, y, width, height;
+            };
+
+            enum class focus_type {
+                gained, lost
+            };
+
+            using key_type = char32_t;
+
+            enum class mouse_type {
+                unknown, left, middle, right, scroll_forward, scroll_backward
+            };
+
+            using scroll_type = int;
+
+            struct motion_type {
+                int x, y;
+            };
+
+            union data_type {
+                configuration_type configuration;
+                focus_type focus;
+                key_type key;
+                mouse_type mouse;
+                scroll_type scroll;
+                motion_type motion;
+            };
+        public:
+            input_type input;
+            data_type data;
+        };
+
+    private:
+        #if defined(linux) || defined(__linux) || defined(__linux__)
+
+            struct platform_window_type final {
+                // X11 display handle.
+                Display* display_handle;
+
+                // X11 window handle.
+                Window window_handle;
+
+                // X11 atom to allow the close button of the window to be monitored.
+                Atom close_handler;
+
+                // Flag to store if the cursor is hidden.
+                bool cursor_hidden;
+
+                // Flag to store if user input is grabbed.
+                bool grab_input;
+
+                // OpenGL context.
+                GLXContext opengl_context;
+            };
+
+        #elif defined(_WIN32)
+
+            struct platform_window_type final {
+                // WindowHandle holds the windows handle to the created window.
+                HWND window_handle;
+
+                // Device context.
+                HDC device_context;
+
+                // OpenGL context.
+                HGLRC opengl_context;
+
+                // Window messages structure.
+                struct windows_message_type {
+                    UINT message;
+                    WPARAM word_param;
+                    LPARAM long_param;
+                };
+
+                // Message queue to hold captured windows messages.
+                std::deque<windows_message_type> windows_messages;
+
+                // Capturing messages.
+                static LRESULT CALLBACK callback(HWND window_handle, UINT message, WPARAM word_param, LPARAM long_param) {
+                    // Look for the window creation message.
+                    if (message == WM_NCCREATE) {
+                        // Get the window create struct that is passed in.
+                        CREATESTRUCT* create_data = reinterpret_cast<CREATESTRUCT*>(long_param);
+                        // The pointer to the gtl::window object is passed in the lpCreateParams argument.
+                        window* thus = reinterpret_cast<window*>(create_data->lpCreateParams);
+                        // Save the pointer within the window for use later.
+                        SetWindowLongPtrA(window_handle, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(thus));
+                        // Finally return using the default handler.
+                        return DefWindowProcA(window_handle, message, word_param, long_param);
+                    }
+
+                    // If this is not a post create message but we don't have a valid window_handle.
+                    if (!window_handle) {
+                        // Return using the default handler.
+                        return DefWindowProcA(window_handle, message, word_param, long_param);
+                    }
+
+                    // Attempt to extract the stored pointer from the window_handle.
+                    window* thus = reinterpret_cast<window*>(GetWindowLongPtrA(window_handle, GWLP_USERDATA));
+                    // If we failed to extrat it return using the default handler.
+                    if (thus == nullptr) {
+                        return DefWindowProcA(window_handle, message, word_param, long_param);
+                    }
+
+                    // Save the message so it can be processed else where.
+                    thus->platform_window.windows_messages.emplace_back(windows_message_type{ message, word_param, long_param });
+
+                    // Some non-default behaviour.
+                    switch (message) {
+                        // Disables the crazy beeping sound when pressing a key that has no mnemonic configuration in the menu.
+                        case WM_MENUCHAR: return MAKELRESULT(0, MNC_CLOSE);
+                        // Inform the OS that we handle background erasing, returning FALSE would tell the os to handle it.
+                        case WM_ERASEBKGND: return TRUE;
+                        // The OS has requested the program end due to an end-of-session (logout/shutdown etc...).
+                        // Return TRUE to say we agree to terminate, FALSE would terminate the end-of-session procedure.
+                        case WM_QUERYENDSESSION:  return TRUE;
+                        // The OS sends this when it detects a change that requires that an application cancel any modal state it has entered.
+                        // We have to ensure the mouse is no longer captured.
+                        case WM_CANCELMODE: ReleaseCapture(); return FALSE;
+                    }
+
+                    // Otherwise perform the default action.
+                    return DefWindowProcA(window_handle, message, word_param, long_param);
+                }
+            };
+
+        #elif defined(__APPLE__)
+
+        struct platform_window_type final {
+
+            class application_type final {
+            private:
+                static inline unsigned int create_count = 0;
+                static inline id autorelease_pool = nullptr;
+
+                // Window map.
+                static inline std::unordered_map<id, window*> windows;
+
+                // Message queue to hold captured macintosh messages.
+                static inline std::unordered_map<id, std::deque<event_type>> events;
+
+            public:
+                ~application_type() {
+                    GTL_WINDOW_ASSERT(application_type::create_count != 0, "Application window reference count has become corrupted.");
+                    if (--application_type::create_count == 0) {
+                        msg<void(id, SEL)>::send(application_type::autorelease_pool, "drain");
+                        application_type::windows.clear();
+                        application_type::events.clear();
+                    }
+                }
+
+                application_type() {
+                    if (application_type::create_count++ != 0) {
+                        return;
+                    }
+
+                    // NSAutoreleasePool* autorelease_pool = [[NSAutoreleasePool alloc] init];
+                    id poolAlloc = msg<id(Class, SEL)>::send("NSAutoreleasePool", "alloc");
+                    application_type::autorelease_pool = msg<id(id, SEL)>::send(poolAlloc, "init");
+
+                    // [NSApplication sharedApplication];
+                    msg<id(Class, SEL)>::send("NSApplication", "sharedApplication");
+
+                    // [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+                    msg<void(id, SEL, NSInteger)>::send(NSApp, "setActivationPolicy:", 0);
+
+                    // AppDelegate* dg = [[AppDelegate alloc] init];
+                    Class AppDelegateClass = objc_allocateClassPair(objc_getClass("NSObject"), "AppDelegate", 0);
+                    Protocol* NSApplicationDelegateProtocol = objc_getProtocol("NSApplicationDelegate");
+                    bool resultAddProtoc = class_addProtocol(AppDelegateClass, NSApplicationDelegateProtocol);
+                    GTL_WINDOW_ASSERT(resultAddProtoc, "Failed to add the applicationShouldTerminate function protocol to the application class.");
+
+                    #if __LP64__ || (TARGET_OS_EMBEDDED && !TARGET_OS_IPHONE) || TARGET_OS_WIN32 || NS_BUILD_32_LIKE_64
+                        constexpr static const char* const NSUIntegerString = "L@:@";
+                    #else
+                        constexpr static const char* const NSUIntegerString = "I@:@";
+                    #endif
+                    bool resultAddMethod = class_addMethod(
+                        AppDelegateClass,
+                        sel_registerName("applicationShouldTerminate:"),
+                        reinterpret_cast<IMP>(static_cast<NSUInteger(*)(id, SEL, id)>([](id self, SEL sel, id sender) -> NSUInteger {
+                            static_cast<void>(self);
+                            static_cast<void>(sel);
+                            static_cast<void>(sender);
+                            application_type::terminate();
+                            return 0; // 0 = NSTerminateCancel;
+                        })),
+                        NSUIntegerString
+                    );
+                    GTL_WINDOW_ASSERT(resultAddMethod, "Failed to add the applicationShouldTerminate function to the application class.");
+
+                    id dgAlloc = msg<id(Class, SEL)>::send(AppDelegateClass, get_key_type<SEL>::forward("alloc"));
+                    id dg = msg<id(id, SEL)>::send(dgAlloc, "init");
+                    msg<void(id, SEL)>::send(dg, "autorelease");
+
+                    // [NSApp setDelegate:dg];
+                    msg<void(id, SEL, id)>::send(NSApp, "setDelegate:", dg);
+
+                    // Needed as we don't use [NSApp run].
+                    // [NSApp finishLaunching];
+                    msg<void(id, SEL)>::send(NSApp, "finishLaunching");
+
+                    // Bring the application to the front.
+                    // [NSApp activateIgnoringOtherApps:YES];
+                    msg<void(id, SEL, BOOL)>::send(NSApp, "activateIgnoringOtherApps:", YES);
+
+                    // id menubar = [[NSMenu alloc] init];
+                    id menubarAlloc = msg<id(Class, SEL)>::send("NSMenu", "alloc");
+                    id menubar = msg<id(id, SEL)>::send(menubarAlloc, "init");
+                    msg<void(id, SEL)>::send(menubar, "autorelease");
+
+                    // id appMenuItem = [[NSMenuItem alloc] init];
+                    id appMenuItemAlloc = msg<id(Class, SEL)>::send("NSMenuItem", "alloc");
+                    id appMenuItem = msg<id(id, SEL)>::send(appMenuItemAlloc, "init");
+                    msg<void(id, SEL)>::send(appMenuItem, "autorelease");
+
+                    // [menubar addItem:appMenuItem];
+                    msg<void(id, SEL, id)>::send(menubar, "addItem:", appMenuItem);
+
+                    // [NSApp setMainMenu:menubar];
+                    msg<void(id, SEL, id)>::send(NSApp, "setMainMenu:", menubar);
+
+                    // id appMenu = [[NSMenu alloc] init];
+                    id appMenuAlloc = msg<id(Class, SEL)>::send("NSMenu", "alloc");
+                    id appMenu = msg<id(id, SEL)>::send(appMenuAlloc, "init");
+                    msg<void(id, SEL)>::send(appMenu, "autorelease");
+
+                    // id appName = [[NSProcessInfo processInfo] processName];
+                    id processInfo = msg<id(Class, SEL)>::send("NSProcessInfo", "processInfo");
+                    id appName = msg<id(id, SEL)>::send(processInfo, "processName");
+
+                    // id quitTitle = [@"Quit " stringByAppendingString:appName];
+                    id quitTitlePrefixString = msg<id(Class, SEL, const char*)>::send("NSString", "stringWithUTF8String:", "Quit ");
+                    id quitTitle = msg<id(id, SEL, id)>::send(quitTitlePrefixString, "stringByAppendingString:", appName);
+
+                    // id quitMenuItem = [[NSMenuItem alloc] initWithTitle:quitTitle action:@selector(terminate:) keyEquivalent:@"q"];
+                    id quitMenuItemKey = msg<id(Class, SEL, const char*)>::send("NSString", "stringWithUTF8String:", "q");
+                    id quitMenuItemAlloc = msg<id(Class, SEL)>::send("NSMenuItem", "alloc");
+                    id quitMenuItem = msg<id(id, SEL, id, SEL, id)>::send(quitMenuItemAlloc, "initWithTitle:action:keyEquivalent:", quitTitle, "terminate:", quitMenuItemKey);
+                    msg<void(id, SEL)>::send(quitMenuItem, "autorelease");
+
+                    // [appMenu addItem:quitMenuItem];
+                    msg<void(id, SEL, id)>::send(appMenu, "addItem:", quitMenuItem);
+
+                    // [appMenuItem setSubmenu:appMenu];
+                    msg<void(id, SEL, id)>::send(appMenuItem, "setSubmenu:", appMenu);
+                }
+
+                application_type(const application_type&) = default;
+                application_type(application_type&&) = default;
+
+                application_type& operator=(const application_type&) = default;
+                application_type& operator=(application_type&&) = default;
+
+            public:
+                static void register_window(id window_handle, window* window_pointer) {
+                    application_type::windows[window_handle] = window_pointer;
+                }
+
+                static void unregister_window(id window_handle) {
+                    application_type::windows.erase(window_handle);
+                }
+
+            public:
+                static void close(id window_handle) {
+                    std::unordered_map<id, window*>::iterator id_window = application_type::windows.find(window_handle);
+                    if (id_window != application_type::windows.end()) {
+                        id_window->second->close();
+                    }
+                }
+
+                static void terminate() {
+                    while (!application_type::windows.empty()) {
+                        application_type::windows.begin()->second->close();
+                    }
+                }
+
+            public:
+                static void add_event(const event_type& event) {
+                    // Add the event for all windows.
+                    for (const std::pair<const id, window*>& id_window : application_type::windows) {
+                        application_type::add_event(id_window.first, event);
+                    }
+                }
+
+                static void add_event(id window_handle, const event_type& event) {
+                    application_type::events[window_handle].push_back(event);
+                }
+
+                static bool get_event(id window_handle, event_type& event) {
+                    std::unordered_map<id, std::deque<event_type>>::iterator event_queue = application_type::events.find(window_handle);
+                    if (event_queue == application_type::events.end()) {
+                        return false;
+                    }
+                    if (event_queue->second.empty()) {
+                        application_type::events.erase(event_queue);
+                        return false;
+                    }
+                    event = event_queue->second.front();
+                    event_queue->second.pop_front();
+                    return true;
+                }
+            };
+
+            application_type application;
+            id window_handle;
+            id contentView;
+            id openGLContext;
+        };
+
+        #else
+
+        struct platform_window_type final {
+        };
+
+        #endif
+
+    private:
+        platform_window_type platform_window;
+
+    public:
+        ~window() {
+            // Remove window from the manager.
+            window::manager::remove_window(this);
+
+            // Ensure the window is closed.
+            this->close();
+        }
+
+        window()
+            : platform_window{} {
+
+            // Add the window to the window manager.
+            window::manager::add_window(this);
+        }
+
+        window(
+            int x,
+            int y,
+            unsigned int width,
+            unsigned int height,
+            const std::string& title = "Untitled"
+        )
+            : window() {
+
+            // Attempt to open a window.
+            this->open(x, y, width, height, title);
+        }
+
+        window(const window&) = delete;
+
+        window& operator=(const window&) = delete;
+
+        window(window&& other) {
+            platform_window_type temp = std::move(this->platform_window);
+            this->platform_window = std::move(other.platform_window);
+            other.platform_window = std::move(temp);
+            #if defined(_WIN32)
+                // As we use a pointer to pass callbacks to the right place in windows, we have to update it.
+                if (this->platform_window.window_handle) {
+                    SetWindowLongPtrA(this->platform_window.window_handle, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+                }
+            #endif
+        }
+
+        window& operator=(window&& other) {
+            if (this != &other) {
+                platform_window_type temp = std::move(this->platform_window);
+                this->platform_window = std::move(other.platform_window);
+                other.platform_window = std::move(temp);
+                #if defined(_WIN32)
+                    // As we use a pointer to pass callbacks to the right place in windows, we have to update it.
+                    if (this->platform_window.window_handle) {
+                        SetWindowLongPtrA(this->platform_window.window_handle, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+                    }
+                #endif
+            }
+            return *this;
+        }
+
+    public:
+        bool is_open() const {
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                return (this->platform_window.window_handle != 0);
+            #elif defined(_WIN32)
+                return (this->platform_window.window_handle != nullptr);
+            #elif defined(__APPLE__)
+                return (this->platform_window.window_handle != nullptr);
+            #else
+                return false;
+            #endif
+        }
+
+    public:
+        bool open(
+            int x,
+            int y,
+            unsigned int width,
+            unsigned int height,
+            const std::string& title = "Untitled"
+        ) {
+            // Disable opening a window that is already open.
+            if (this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+
+                // Connect to X server
+                this->platform_window.display_handle = XOpenDisplay(nullptr);
+                if (this->platform_window.display_handle == nullptr) {
+                    return false;
+                }
+
+                // Create a window attributes structure to setup the new window.
+                XSetWindowAttributes window_attributes;
+
+                // Enable every event.
+                window_attributes.event_mask =
+                    KeyPressMask            | KeyReleaseMask        |
+                    ButtonPressMask         | ButtonReleaseMask     |
+                    EnterWindowMask         | LeaveWindowMask       |
+                    PointerMotionMask       | //PointerMotionHintMask | // This breaks mouse move events.
+                    Button1MotionMask       | Button2MotionMask     | Button3MotionMask | Button4MotionMask | Button5MotionMask | ButtonMotionMask |
+                    KeymapStateMask         |
+                    ExposureMask            |
+                    VisibilityChangeMask    |
+                    StructureNotifyMask     |
+                    //ResizeRedirectMask      | // This breaks getting size.
+                    SubstructureNotifyMask  | //SubstructureRedirectMask |
+                    FocusChangeMask         |
+                    PropertyChangeMask      |
+                    ColormapChangeMask      |
+                    OwnerGrabButtonMask;
+
+                // Override redirect flag.
+                window_attributes.override_redirect = False;
+
+                // Background pixmap.
+                window_attributes.background_pixmap = None;
+
+                // Border pixels.
+                window_attributes.border_pixel = 0;
+
+                // Create a colour map.
+                window_attributes.colormap = XCreateColormap(
+                    this->platform_window.display_handle,
+                    (&(reinterpret_cast<_XPrivDisplay>(this->platform_window.display_handle))->screens[((reinterpret_cast<_XPrivDisplay>(this->platform_window.display_handle))->default_screen)])->root,
+                    //RootWindow(this->platform_window.display_handle, DefaultScreen(this->platform_window.display_handle)),
+                    DefaultVisual(this->platform_window.display_handle, DefaultScreen(this->platform_window.display_handle)),
+                    AllocNone
+                );
+
+                // Create an X window.
+                this->platform_window.window_handle = XCreateWindow(
+                    this->platform_window.display_handle,
+                    RootWindow(this->platform_window.display_handle, DefaultScreen(this->platform_window.display_handle)),
+                    x,
+                    y,
+                    width,
+                    height,
+                    0,
+                    DefaultDepth(this->platform_window.display_handle, DefaultScreen(this->platform_window.display_handle)),
+                    InputOutput,
+                    DefaultVisual(this->platform_window.display_handle, DefaultScreen(this->platform_window.display_handle)),
+                    CWBorderPixel | CWBackPixmap | CWColormap | CWEventMask | CWOverrideRedirect,
+                    &window_attributes
+                );
+
+                // To position and size the window we have to set the size hints, in addition to setting them when we created the window.
+                XSizeHints window_size{};
+                window_size.flags  = PPosition | PSize;
+                window_size.x      = x;
+                window_size.y      = y;
+                window_size.width  = static_cast<int>(width);
+                window_size.height = static_cast<int>(height);
+                XSetNormalHints(this->platform_window.display_handle, this->platform_window.window_handle, &window_size);
+
+                // Add input handler for close button
+                this->platform_window.close_handler = XInternAtom(this->platform_window.display_handle, "WM_DELETE_WINDOW", False);
+                XSetWMProtocols(this->platform_window.display_handle, this->platform_window.window_handle, &this->platform_window.close_handler, 1);
+
+                // Specify the desired framebuffer configuration.
+                const int framebuffer_attributes[] = {
+                    GLX_X_RENDERABLE,   GL_TRUE,
+                    GLX_DRAWABLE_TYPE,  GLX_WINDOW_BIT,
+                    GLX_DOUBLEBUFFER,   GL_TRUE,
+                    GLX_RENDER_TYPE,    GLX_RGBA_BIT,
+                    GLX_X_VISUAL_TYPE,  GLX_TRUE_COLOR,
+                    GLX_BUFFER_SIZE,    24,
+                    GLX_DEPTH_SIZE,     24,
+                    GLX_STENCIL_SIZE,   8,
+                    GLX_SAMPLE_BUFFERS, GL_FALSE,
+                    GLX_SAMPLES,        0,
+                    0
+                };
+
+                // Choose a framebuffer configuration.
+                int config_count;
+                GLXFBConfig* configs = glXChooseFBConfig(this->platform_window.display_handle, DefaultScreen(this->platform_window.display_handle), framebuffer_attributes, &config_count);
+                if (config_count == 0) {
+                    // Pixel format error
+                    this->close();
+                    return false;
+                }
+
+                // Select the first of any returned.
+                GLXFBConfig config = configs[0];
+                XFree(configs);
+
+                // Create OpenGL 3.3 or greater context.
+                int context_attributes[] = {
+                    GLX_CONTEXT_MAJOR_VERSION_ARB,  1,
+                    GLX_CONTEXT_MINOR_VERSION_ARB,  1,
+                    //GLX_CONTEXT_FLAGS_ARB, GLX_CONTEXT_DEBUG_BIT_ARB,
+                    GLX_CONTEXT_PROFILE_MASK_ARB,   GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
+                    None
+                };
+
+                // Need to get the glXCreateContextAttribsARB function address via glXGetProcAddressARB to use it.
+                //typedef GLXContext(*glXCreateContextAttribsARBProc)(Display*, GLXFBConfig, GLXContext, Bool, const int*);
+                using glXCreateContextAttribsARBProc = GLXContext(*)(Display*, GLXFBConfig, GLXContext, Bool, const int*);
+                glXCreateContextAttribsARBProc glXCreateContextAttribsARB = reinterpret_cast<glXCreateContextAttribsARBProc>(glXGetProcAddressARB(reinterpret_cast<const GLubyte*>("glXCreateContextAttribsARB")));
+
+                // Check the loaded function.
+                if (!glXCreateContextAttribsARB) {
+                    this->close();
+                    return false;
+                }
+
+                // Use glXCreateContextAttribsARB to create an opengl context.
+                this->platform_window.opengl_context = glXCreateContextAttribsARB(this->platform_window.display_handle, config, nullptr, GL_TRUE, context_attributes);
+
+                // Check the context.
+                if (!this->platform_window.opengl_context) {
+                    this->close();
+                    return false;
+                }
+
+                GLenum error = glGetError();
+                if (error) {
+                    this->close();
+                    return false;
+                }
+
+            #elif defined(_WIN32)
+
+                constexpr static const char* class_name = "gtl::window";
+                constexpr static const DWORD style_flags =
+                        WS_THICKFRAME |
+                        WS_CAPTION |
+                        WS_CLIPCHILDREN |
+                        WS_MAXIMIZEBOX |
+                        WS_MINIMIZEBOX |
+                        WS_SYSMENU;
+                constexpr static const DWORD extended_style_flags = WS_EX_APPWINDOW;
+
+                // Ensure class name is registered.
+                HINSTANCE module_handle = GetModuleHandleA(nullptr);
+                WNDCLASSEX window_class;
+
+                // Check if the class is already registered.
+                if (GetClassInfoExA(module_handle, class_name, &window_class) == 0) {
+                    // Fill window class structure.
+                    window_class.cbSize         = sizeof(WNDCLASSEX);
+                    window_class.style          = CS_OWNDC;
+                    window_class.cbClsExtra     = 0;
+                    window_class.cbWndExtra     = 0;
+                    window_class.hInstance      = module_handle;
+                    window_class.hIcon          = LoadIconA(module_handle, RT_ICON);
+                    window_class.hCursor        = LoadCursorA(0, IDC_ARROW);
+                    window_class.hbrBackground  = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+                    window_class.lpszMenuName   = nullptr;
+                    window_class.lpszClassName  = class_name;
+                    window_class.hIconSm        = LoadIconA(module_handle, RT_ICON);
+                    window_class.lpfnWndProc    = gtl::window::platform_window_type::callback;
+
+                    // Register class.
+                    if (RegisterClassExA(&window_class) == 0) {
+                        return false;
+                    }
+                }
+
+                // Create window.
+                this->platform_window.window_handle = CreateWindowExA(
+                    extended_style_flags,
+                    class_name,
+                    title.c_str(),
+                    style_flags,
+                    x,
+                    y,
+                    static_cast<int>(width),
+                    static_cast<int>(height),
+                    GetDesktopWindow(),
+                    nullptr,
+                    module_handle,
+                    this
+                );
+
+                // Check the window.
+                if (this->platform_window.window_handle == nullptr) {
+                    return false;
+                }
+
+                this->platform_window.device_context = GetDC(this->platform_window.window_handle);
+                if (!this->platform_window.device_context) {
+                    this->close();
+                    return false;
+                }
+
+                // Specify the desired framebuffer configuration.
+                PIXELFORMATDESCRIPTOR pixel_format_descriptor = {
+                    sizeof(PIXELFORMATDESCRIPTOR),
+                    1,
+                    PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+                    PFD_TYPE_RGBA,
+                    32, // Colordepth of the framebuffer.
+                    0, 0, 0, 0, 0, 0,
+                    0, // No alpha buffer.
+                    0, // Shift bit ignored.
+                    0, // No accumulation buffer.
+                    0, 0, 0, 0, // Accumulation bits ignored.
+                    24, // Number of bits for the depthbuffer.
+                    8, // Number of bits for the stencilbuffer.
+                    0, // Number of Aux buffers in the framebuffer.
+                    PFD_MAIN_PLANE,
+                    0, // Reserved.
+                    0, 0, 0 // Layer masks ignored.
+                };
+
+                int pixel_format_index = ChoosePixelFormat(this->platform_window.device_context, &pixel_format_descriptor);
+                if (pixel_format_index == 0) {
+                    this->close();
+                    return false;
+                }
+
+                if (!SetPixelFormat(this->platform_window.device_context, pixel_format_index, &pixel_format_descriptor)) {
+                    this->close();
+                    return false;
+                }
+
+                // Make a temp context so we can use wglGetProcAddress.
+                HGLRC temp_opengl_context = wglCreateContext(this->platform_window.device_context);
+                if (!temp_opengl_context) {
+                    this->close();
+                    return false;
+                }
+
+                // Make the temp context current.
+                wglMakeCurrent(this->platform_window.device_context, temp_opengl_context);
+
+                // Need to get the wglCreateContextAttribsARB function address via wglGetProcAddress to use it.
+                //typedef HGLRC(WINAPI * PFNWGLCREATECONTEXTATTRIBSARBPROC) (HDC device_context, HGLRC shared_opengl_context, const int* context_attributes);
+                using PFNWGLCREATECONTEXTATTRIBSARBPROC = HGLRC(WINAPI*)(HDC device_context, HGLRC shared_opengl_context, const int* context_attributes);
+                PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
+
+                // Free the temp context.
+                wglDeleteContext(temp_opengl_context);
+
+                // Check the loaded function.
+                if (!wglCreateContextAttribsARB) {
+                    this->close();
+                    return false;
+                }
+
+                #define WGL_CONTEXT_MAJOR_VERSION_ARB     0x2091
+                #define WGL_CONTEXT_MINOR_VERSION_ARB     0x2092
+                #define WGL_CONTEXT_PROFILE_MASK_ARB      0x9126
+                #define WGL_CONTEXT_CORE_PROFILE_BIT_ARB  0x00000001
+
+                int context_attributes[] = {
+                    WGL_CONTEXT_MAJOR_VERSION_ARB,  3,
+                    WGL_CONTEXT_MINOR_VERSION_ARB,  3,
+                    WGL_CONTEXT_PROFILE_MASK_ARB,   WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+                    0
+                };
+
+                // Use wglCreateContextAttribsARB to create an opengl context.
+                this->platform_window.opengl_context = wglCreateContextAttribsARB(this->platform_window.device_context, 0, context_attributes);
+
+                // Check the context.
+                if (!this->platform_window.opengl_context) {
+                    this->close();
+                    return false;
+                }
+
+            #elif defined(__APPLE__)
+
+                if (NSApp == nullptr) {
+                    return false;
+                }
+
+                // id window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 500, 500) styleMask:NSTitledWindowMask | NSClosableWindowMask | NSMiniaturizableWindowMask | NSResizableWindowMask backing:NSBackingStoreBuffered defer:NO];
+                id windowAlloc = msg<id(Class, SEL)>::send("NSWindow", "alloc");
+                this->platform_window.window_handle = msg<id(id, SEL, CGRect, NSUInteger, NSUInteger, BOOL)>::send(windowAlloc, "initWithContentRect:styleMask:backing:defer:", CGRect{{CGFloat(x), CGFloat(y)}, {CGFloat(width), CGFloat(height)}}, 15, 2, NO);
+                msg<void(id, SEL)>::send(this->platform_window.window_handle, "autorelease");
+
+                // Register window with application.
+                platform_window_type::application_type::register_window(this->platform_window.window_handle, this);
+
+                // When we are not using ARC, than handle will be added to autorelease pool
+                // So if we close it by hand (pressing red button), we don't want it to be released for us
+                // So it will be released by autorelease pool later
+                // [handle setReleasedWhenClosed:NO];
+                msg<void(id, SEL, BOOL)>::send(this->platform_window.window_handle, "setReleasedWhenClosed:", NO);
+
+                //WindowDelegate * wdg = [[WindowDelegate alloc] init];
+                Class WindowDelegateClass = objc_allocateClassPair(objc_getClass("NSObject"), "WindowDelegate", 0);
+                Protocol* NSWindowDelegateProtocol = objc_getProtocol("NSWindowDelegate");
+                bool resultAddProtoc = class_addProtocol(WindowDelegateClass, NSWindowDelegateProtocol);
+                static_cast<void>(resultAddProtoc);
+                GTL_WINDOW_ASSERT(resultAddProtoc, "Failed to add the windowWillClose function protocol to the window class.");
+
+                bool resultAddMethod = class_addMethod(
+                    WindowDelegateClass,
+                    sel_registerName("windowWillClose:"),
+                    reinterpret_cast<IMP>(static_cast<void(*)(id, SEL, id)>([](id self, SEL sel, id notification) {
+                        static_cast<void>(self);
+                        static_cast<void>(sel);
+                        id window_handle = msg<id(id, SEL)>::send(notification, "object");
+                        platform_window_type::application_type::close(window_handle);
+                    })),
+                    "v@:@"
+                );
+                static_cast<void>(resultAddMethod);
+                GTL_WINDOW_ASSERT(resultAddMethod, "Failed to add the windowWillClose function to the window class.");
+
+                id wdgAlloc = msg<id(Class, SEL)>::send(WindowDelegateClass, get_key_type<SEL>::forward("alloc"));
+                id wdg = msg<id(id, SEL)>::send(wdgAlloc, "init");
+                msg<void(id, SEL)>::send(wdg, "autorelease");
+
+                //[handle setDelegate:wdg];
+                msg<void(id, SEL, id)>::send(this->platform_window.window_handle, "setDelegate:", wdg);
+
+                //NSView * contentView = [handle contentView];
+                this->platform_window.contentView = msg<id(id, SEL)>::send(this->platform_window.window_handle, "contentView");
+
+                // disable this if you don't want retina support
+                //[contentView setWantsBestResolutionOpenGLSurface:YES];
+                msg<void(id, SEL, BOOL)>::send(this->platform_window.contentView, "setWantsBestResolutionOpenGLSurface:", YES);
+
+                //[handle cascadeTopLeftFromPoint:NSMakePoint(20,20)];
+                msg<void(id, SEL, CGPoint)>::send(this->platform_window.window_handle, "cascadeTopLeftFromPoint:", CGPoint{20, 20});
+
+                //NSOpenGLPixelFormatAttribute glAttributes[] =
+                //{
+                //    NSOpenGLPFAColorSize, 24,
+                //    NSOpenGLPFAAlphaSize, 8,
+                //    NSOpenGLPFADoubleBuffer,
+                //    NSOpenGLPFAAccelerated,
+                //    NSOpenGLPFANoRecovery,
+                //    NSOpenGLPFASampleBuffers, 1,
+                //    NSOpenGLPFASamples, 4,
+                //    NSOpenGLPFAOpenGLProfile, NSOpenGLProfileVersionLegacy, // or NSOpenGLProfileVersion3_2Core
+                //    0
+                //};
+                uint32_t glAttributes[] = {
+                    8, 24,
+                    11, 8,
+                    5,
+                    73,
+                    72,
+                    55, 1,
+                    56, 4,
+                    99, 0x3200,
+                    0
+                };
+
+                //NSOpenGLPixelFormat * pixelFormat = [[NSOpenGLPixelFormat alloc] initWithAttributes:glAttributes];
+                id pixelFormatAlloc = msg<id(Class, SEL)>::send("NSOpenGLPixelFormat", "alloc");
+                id pixelFormat = msg<id(id, SEL, const uint32_t*)>::send(pixelFormatAlloc, "initWithAttributes:", glAttributes);
+                msg<void(id, SEL)>::send(pixelFormat, "autorelease");
+
+                //NSOpenGLContext * openGLContext = [[NSOpenGLContext alloc] initWithFormat:pixelFormat shareContext:nil];
+                id openGLContextAlloc = msg<id(Class, SEL)>::send("NSOpenGLContext", "alloc");
+                this->platform_window.openGLContext = msg<id(id, SEL, id, id)>::send(openGLContextAlloc, "initWithFormat:shareContext:", pixelFormat, nil);
+                msg<void(id, SEL)>::send(this->platform_window.openGLContext, "autorelease");
+
+                //[openGLContext setView:contentView];
+                msg<void(id, SEL, id)>::send(this->platform_window.openGLContext, "setView:", this->platform_window.contentView);
+
+                //[handle makeKeyAndOrderFront:handle];
+                msg<void(id, SEL, id)>::send(this->platform_window.window_handle, "makeKeyAndOrderFront:", this->platform_window.window_handle);
+
+                //[handle setAcceptsMouseMovedEvents:YES];
+                msg<void(id, SEL, BOOL)>::send(this->platform_window.window_handle, "setAcceptsMouseMovedEvents:", YES);
+
+                //[handle setBackgroundColor:[NSColor blackColor]];
+                id blackColor = msg<id(Class, SEL)>::send("NSColor", "blackColor");
+                msg<void(id, SEL, id)>::send(this->platform_window.window_handle, "setBackgroundColor:", blackColor);
+
+            #else
+
+                static_cast<void>(x);
+                static_cast<void>(y);
+                static_cast<void>(width);
+                static_cast<void>(height);
+                static_cast<void>(title);
+                return false;
+
+            #endif
+
+            // Set the window title.
+            this->set_title(title);
+
+            return true;
+        }
+
+        void close() {
+            if (!this->is_open()) return;
+
+            this->set_visible(false);
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+
+                XWindowAttributes window_attributes;
+                if (XGetWindowAttributes(this->platform_window.display_handle, this->platform_window.window_handle, &window_attributes) == Success) {
+                    XFreeColormap(this->platform_window.display_handle, window_attributes.colormap);
+                }
+
+                if (this->platform_window.opengl_context) {
+                    glXMakeCurrent(this->platform_window.display_handle, 0, nullptr);
+                    glXDestroyContext(this->platform_window.display_handle, this->platform_window.opengl_context);
+                    this->platform_window.opengl_context = nullptr;
+                }
+
+                XDestroyWindow(this->platform_window.display_handle, this->platform_window.window_handle);
+                XFlush(this->platform_window.display_handle);
+                XSync(this->platform_window.display_handle, False);
+                XCloseDisplay(this->platform_window.display_handle);
+
+                this->platform_window.window_handle = 0;
+                this->platform_window.display_handle = nullptr;
+
+            #elif defined(_WIN32)
+
+                if (this->platform_window.opengl_context) {
+                    wglMakeCurrent(this->platform_window.device_context, nullptr);
+                    wglDeleteContext(this->platform_window.opengl_context);
+                    this->platform_window.opengl_context = nullptr;
+                }
+
+                DestroyWindow(this->platform_window.window_handle);
+                this->platform_window.window_handle = nullptr;
+
+            #elif defined(__APPLE__)
+                
+                if (NSApp == nullptr) {
+                    return;
+                }
+
+                platform_window_type::application_type::unregister_window(this->platform_window.window_handle);
+
+                // TODO: Cleanup.
+
+                this->platform_window.window_handle = nullptr;
+
+                // If the window is in the application wide message queue, remove (handle?) all remaining messages.
+                //...
+
+            #else
+
+                return;
+
+            #endif
+        }
+
+    public:
+        bool is_iconised() const  {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                Atom type;
+                int format;
+                unsigned long property_count;
+                unsigned long property_bytes;
+                unsigned long* property_data;
+
+                int status = XGetWindowProperty(
+                    this->platform_window.display_handle,
+                    this->platform_window.window_handle,
+                    XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE", False),
+                    0,
+                    (~0L),
+                    False,
+                    AnyPropertyType,
+                    &type,
+                    &format,
+                    &property_count,
+                    &property_bytes,
+                    reinterpret_cast<unsigned char**>(&property_data)
+                );
+
+                if (status != Success) {
+                    return false;
+                }
+
+                bool state_hidden = false;
+
+                for (unsigned long property_index = 0; property_index < property_count; ++property_index) {
+                    if (property_data[property_index] == XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE_HIDDEN", False)) {
+                        state_hidden = true;
+                        break;
+                    }
+                }
+
+                XFree(property_data);
+
+                return state_hidden;
+            #elif defined(_WIN32)
+                return (IsIconic(this->platform_window.window_handle) == TRUE);
+            #elif defined(__APPLE__)
+
+                return false;
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void set_iconised(bool iconised) {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                if (iconised) {
+                    // Minimise the window.
+                    XIconifyWindow(this->platform_window.display_handle, this->platform_window.window_handle, DefaultScreen(this->platform_window.display_handle));
+                }
+                else {
+                    // Un-minimise the window.
+                    XEvent iconify_event                  = {};
+                    iconify_event.xany.type               = ClientMessage;
+                    iconify_event.xclient.message_type    = XInternAtom(this->platform_window.display_handle, "_NET_ACTIVE_WINDOW", False);
+                    iconify_event.xclient.format          = 32;
+                    iconify_event.xclient.window          = this->platform_window.window_handle;
+                    iconify_event.xclient.data.l[0]       = 1;
+                    iconify_event.xclient.data.l[1]       = CurrentTime;
+                    iconify_event.xclient.data.l[2]       = 0;
+
+                    XSendEvent(
+                        this->platform_window.display_handle,
+                        RootWindow(this->platform_window.display_handle, DefaultScreen(this->platform_window.display_handle)),
+                        0,
+                        SubstructureNotifyMask | SubstructureRedirectMask,
+                        &iconify_event
+                    );
+                }
+            #elif defined(_WIN32)
+                if (iconised) {
+                    ShowWindow(this->platform_window.window_handle, SW_MINIMIZE);
+                }
+                else {
+                    ShowWindow(this->platform_window.window_handle, SW_RESTORE);
+                }
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(iconised);
+                return;
+
+            #endif
+        }
+
+        bool is_visible() const {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                XWindowAttributes window_attributes;
+                XGetWindowAttributes(this->platform_window.display_handle, this->platform_window.window_handle, &window_attributes);
+
+                return (window_attributes.map_state != IsUnmapped);
+            #elif defined(_WIN32)
+                return (IsWindowVisible(this->platform_window.window_handle) == TRUE);
+            #elif defined(__APPLE__)
+                //[myWindow isVisible];
+
+                return false;
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void set_visible(bool visible) {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                if (visible) {
+                    // Make the window visible.
+                    XMapWindow(this->platform_window.display_handle, this->platform_window.window_handle);
+                }
+                else {
+                    // Hide the window.
+                    XUnmapWindow(this->platform_window.display_handle, this->platform_window.window_handle);
+                }
+            #elif defined(_WIN32)
+                if (visible) {
+                    ShowWindow(this->platform_window.window_handle, SW_SHOW);
+                }
+                else {
+                    ShowWindow(this->platform_window.window_handle, SW_HIDE);
+                }
+            #elif defined(__APPLE__)
+                // Show
+                //[myWindow makeKeyAndOrderFront:self];
+                //[NSApp activateIgnoringOtherApps:YES];
+                // Hide
+                //[myWindow orderOut:self];
+
+                return;
+
+            #else
+
+                static_cast<void>(visible);
+                return;
+
+            #endif
+        }
+
+        bool is_maximised() const {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                Atom type;
+                int format;
+                unsigned long property_count;
+                unsigned long property_bytes;
+                unsigned long* property_data;
+
+                int status = XGetWindowProperty(
+                    this->platform_window.display_handle,
+                    this->platform_window.window_handle,
+                    XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE", False),
+                    0,
+                    (~0L),
+                    False,
+                    AnyPropertyType,
+                    &type,
+                    &format,
+                    &property_count,
+                    &property_bytes,
+                    reinterpret_cast<unsigned char**>(&property_data)
+                );
+
+                if (status != Success) {
+                    return false;
+                }
+
+                bool state_maximised_vert = false;
+                bool state_maximised_horz = false;
+
+                for (unsigned long property_index = 0; property_index < property_count; ++property_index) {
+                    if (property_data[property_index] == XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE_MAXIMIZED_VERT", False)) {
+                        state_maximised_vert = true;
+                    }
+                    else if (property_data[property_index] == XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE_MAXIMIZED_HORZ", False)) {
+                        state_maximised_horz = true;
+                    }
+                }
+
+                XFree(property_data);
+
+                return (state_maximised_vert && state_maximised_horz);
+            #elif defined(_WIN32)
+                return (IsZoomed(this->platform_window.window_handle) == TRUE);
+            #elif defined(__APPLE__)
+
+                return false;
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void set_maximised(bool maximised) {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                XEvent maximise_event                   = {};
+                maximise_event.xany.type                = ClientMessage;
+                maximise_event.xclient.message_type     = XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE", False);
+                maximise_event.xclient.format           = 32;
+                maximise_event.xclient.window           = this->platform_window.window_handle;
+                maximise_event.xclient.data.l[0]        = static_cast<int>(maximised);
+                maximise_event.xclient.data.l[1]        = static_cast<long>(XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE_MAXIMIZED_VERT", False));
+                maximise_event.xclient.data.l[2]        = static_cast<long>(XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE_MAXIMIZED_HORZ", False));
+                maximise_event.xclient.data.l[3]        = 0;
+
+                XSendEvent(
+                    this->platform_window.display_handle,
+                    RootWindow(this->platform_window.display_handle, DefaultScreen(this->platform_window.display_handle)),
+                    0,
+                    SubstructureNotifyMask | SubstructureRedirectMask,
+                    &maximise_event
+                );
+            #elif defined(_WIN32)
+                if (maximised) {
+                    ShowWindow(this->platform_window.window_handle, SW_MAXIMIZE);
+                }
+                else {
+                    ShowWindow(this->platform_window.window_handle, SW_RESTORE);
+                }
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(maximised);
+                return;
+
+            #endif
+        }
+
+        bool is_borderless() const {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                Atom type;
+                int format;
+                unsigned long property_count;
+                unsigned long property_bytes;
+                unsigned long* property_data;
+
+                int status = XGetWindowProperty(
+                    this->platform_window.display_handle,
+                    this->platform_window.window_handle,
+                    XInternAtom(this->platform_window.display_handle, "_MOTIF_WM_HINTS", False),
+                    0,
+                    (~0L),
+                    False,
+                    AnyPropertyType,
+                    &type,
+                    &format,
+                    &property_count,
+                    &property_bytes,
+                    reinterpret_cast<unsigned char**>(&property_data)
+                );
+
+                if (status != Success) {
+                    return false;
+                }
+
+                bool state_borderless = false;
+
+                if (property_count == 3) {
+                    state_borderless = ((property_data[0] == 2) && (property_data[1] == 0) && (property_data[2] == 0));
+                }
+
+                XFree(property_data);
+
+                return state_borderless;
+            #elif defined(_WIN32)
+                LONG style_flags = GetWindowLongA(this->platform_window.window_handle, GWL_STYLE);
+                return (style_flags & WS_POPUP) != 0;
+            #elif defined(__APPLE__)
+
+                return false;
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void set_borderless(bool borderless) {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                if (borderless) {
+                    // Remove the border:
+                    unsigned long hints[5] = { 2, 0, 0, 0, 0 };
+                    XChangeProperty(
+                        this->platform_window.display_handle,
+                        this->platform_window.window_handle,
+                        XInternAtom(this->platform_window.display_handle, "_MOTIF_WM_HINTS", False),
+                        XInternAtom(this->platform_window.display_handle, "_MOTIF_WM_HINTS", False),
+                        32,
+                        PropModeReplace,
+                        reinterpret_cast<unsigned char*>(&hints),
+                        3
+                    );
+                }
+                else {
+                    // Add a border:
+                    unsigned long hints[5] = { 3, 62, 126, 0, 0 };
+                    XChangeProperty(
+                        this->platform_window.display_handle,
+                        this->platform_window.window_handle,
+                        XInternAtom(this->platform_window.display_handle, "_MOTIF_WM_HINTS", False),
+                        XInternAtom(this->platform_window.display_handle, "_MOTIF_WM_HINTS", False),
+                        32,
+                        PropModeReplace,
+                        reinterpret_cast<unsigned char*>(&hints),
+                        3
+                    );
+                }
+            #elif defined(_WIN32)
+                LONG style_flags = GetWindowLongA(this->platform_window.window_handle, GWL_STYLE);
+                if (borderless) {
+                    SetWindowLongA(this->platform_window.window_handle, GWL_STYLE, (style_flags | WS_POPUP) & ~WS_OVERLAPPEDWINDOW);
+                }
+                else {
+                    SetWindowLongA(this->platform_window.window_handle, GWL_STYLE, (style_flags | WS_OVERLAPPEDWINDOW) & ~WS_POPUP);
+                }
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(borderless);
+                return;
+
+            #endif
+        }
+
+        bool is_fullscreen() const {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                Atom type;
+                int format;
+                unsigned long property_count;
+                unsigned long property_bytes;
+                unsigned long* property_data;
+
+                int status = XGetWindowProperty(
+                    this->platform_window.display_handle,
+                    this->platform_window.window_handle,
+                    XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE", False),
+                    0,
+                    (~0L),
+                    False,
+                    AnyPropertyType,
+                    &type,
+                    &format,
+                    &property_count,
+                    &property_bytes,
+                    reinterpret_cast<unsigned char**>(&property_data)
+                );
+
+                if (status != Success) {
+                    return false;
+                }
+
+                bool state_fullscreen = false;
+
+                for (unsigned long property_index = 0; property_index < property_count; ++property_index) {
+                    if (property_data[property_index] == XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE_FULLSCREEN", False)) {
+                        state_fullscreen = true;
+                        break;
+                    }
+                }
+
+                XFree(property_data);
+
+                return state_fullscreen;
+            #elif defined(_WIN32)
+                LONG style_flags = GetWindowLongA(this->platform_window.window_handle, GWL_STYLE);
+
+                MONITORINFO monitor_info;
+                monitor_info.cbSize = sizeof(monitor_info);
+                GetMonitorInfoA(MonitorFromWindow(this->platform_window.window_handle, MONITOR_DEFAULTTONEAREST), &monitor_info);
+
+                RECT window_rect = {};
+                GetWindowRect(this->platform_window.window_handle, &window_rect);
+
+                return ((style_flags & WS_POPUP) != 0)
+                    && (monitor_info.rcMonitor.left == window_rect.left)
+                    && (monitor_info.rcMonitor.top == window_rect.top)
+                    && (monitor_info.rcMonitor.right == window_rect.right)
+                    && (monitor_info.rcMonitor.bottom == window_rect.bottom);
+            #elif defined(__APPLE__)
+
+                return false;
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void set_fullscreen(bool fullscreen) {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                XEvent fullscreen_event               = {};
+                fullscreen_event.xclient.type         = ClientMessage;
+                fullscreen_event.xclient.message_type = XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE", False);
+                fullscreen_event.xclient.format       = 32;
+                fullscreen_event.xclient.window       = this->platform_window.window_handle;
+                fullscreen_event.xclient.data.l[0]    = static_cast<int>(fullscreen);
+                fullscreen_event.xclient.data.l[1]    = static_cast<long>(XInternAtom(this->platform_window.display_handle, "_NET_WM_STATE_FULLSCREEN", False));
+                fullscreen_event.xclient.data.l[2]    = 0;
+
+                XSendEvent(this->platform_window.display_handle, DefaultRootWindow(this->platform_window.display_handle), False, SubstructureRedirectMask | SubstructureNotifyMask, &fullscreen_event);
+            #elif defined(_WIN32)
+                LONG style_flags = GetWindowLongA(this->platform_window.window_handle, GWL_STYLE);
+
+                if (fullscreen) {
+                    SetWindowLongA(this->platform_window.window_handle, GWL_STYLE, (style_flags | WS_POPUP) & ~WS_OVERLAPPEDWINDOW);
+
+                    MONITORINFO monitor_info;
+                    monitor_info.cbSize = sizeof(monitor_info);
+                    GetMonitorInfoA(MonitorFromWindow(this->platform_window.window_handle, MONITOR_DEFAULTTONEAREST), &monitor_info);
+                    SetWindowPos(
+                        this->platform_window.window_handle,
+                        nullptr,
+                        monitor_info.rcMonitor.left,
+                        monitor_info.rcMonitor.top,
+                        monitor_info.rcMonitor.right - monitor_info.rcMonitor.left,
+                        monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top,
+                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+                    );
+                }
+                else {
+                    SetWindowLongA(this->platform_window.window_handle, GWL_STYLE, (style_flags | WS_OVERLAPPEDWINDOW) & ~WS_POPUP);
+                }
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(fullscreen);
+                return;
+
+            #endif
+        }
+
+        bool is_focused() const {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                Window focused_window_handle;
+                int revert_to_return;
+                XGetInputFocus(this->platform_window.display_handle, &focused_window_handle, &revert_to_return);
+                return (focused_window_handle == this->platform_window.window_handle);
+            #elif defined(_WIN32)
+                return (GetFocus() == this->platform_window.window_handle);
+            #elif defined(__APPLE__)
+
+                return false;
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void set_focused(bool focused) {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                if (focused) {
+                    // Can only focus if visible.
+                    if (this->is_visible()) {
+                        XSetInputFocus(this->platform_window.display_handle, this->platform_window.window_handle, RevertToParent, CurrentTime);
+                    }
+                }
+                else {
+                    XSetInputFocus(this->platform_window.display_handle, PointerRoot, RevertToParent, CurrentTime);
+                }
+            #elif defined(_WIN32)
+                if (focused) {
+                    SetFocus(this->platform_window.window_handle);
+                }
+                else {
+                    SetForegroundWindow(GetDesktopWindow());
+                }
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(focused);
+                return;
+
+            #endif
+        }
+
+        bool is_cursor_hidden() {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                return this->platform_window.cursor_hidden;
+            #elif defined(_WIN32)
+                int visible = ShowCursor(true);
+                ShowCursor(false);
+                return (visible == 0);
+            #elif defined(__APPLE__)
+
+                return false;
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void set_cursor_hidden(bool cursor_hidden) {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                if (cursor_hidden) {
+                    Cursor invisibleCursor;
+                    Pixmap bitmapNoData;
+                    XColor black = {};
+                    static char noData[] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                    bitmapNoData = XCreateBitmapFromData(this->platform_window.display_handle, this->platform_window.window_handle, noData, 8, 8);
+                    invisibleCursor = XCreatePixmapCursor(this->platform_window.display_handle, bitmapNoData, bitmapNoData, &black, &black, 0, 0);
+                    XDefineCursor(this->platform_window.display_handle, this->platform_window.window_handle, invisibleCursor);
+                    XFreeCursor(this->platform_window.display_handle, invisibleCursor);
+                    XFreePixmap(this->platform_window.display_handle, bitmapNoData);
+                }
+                else {
+                    // Restore the X left facing cursor
+                    Cursor cursor = XCreateFontCursor(this->platform_window.display_handle, XC_left_ptr);
+                    XDefineCursor(this->platform_window.display_handle, this->platform_window.window_handle, cursor);
+                    XFreeCursor(this->platform_window.display_handle, cursor);
+                }
+
+                // Save hidden state.
+                this->platform_window.cursor_hidden = cursor_hidden;
+            #elif defined(_WIN32)
+                if (cursor_hidden) {
+                    while (ShowCursor(false) >= 0);
+                }
+                else {
+                    ShowCursor(true);
+                }
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(cursor_hidden);
+                return;
+
+            #endif
+        }
+
+        bool is_grab_input() {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                return this->platform_window.grab_input;
+            #elif defined(_WIN32)
+                return (this->platform_window.window_handle == GetCapture());
+            #elif defined(__APPLE__)
+
+                return false;
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void set_grab_input(bool grab_input) {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                if (grab_input) {
+                    XGrabPointer(
+                        this->platform_window.display_handle,
+                        this->platform_window.window_handle,
+                        True,
+                        0,
+                        GrabModeAsync,
+                        GrabModeAsync,
+                        this->platform_window.window_handle,
+                        None,
+                        CurrentTime
+                    );
+                    XGrabKeyboard(
+                        this->platform_window.display_handle,
+                        this->platform_window.window_handle,
+                        True,
+                        GrabModeAsync,
+                        GrabModeAsync,
+                        CurrentTime
+                    );
+                }
+                else {
+                    XUngrabPointer(this->platform_window.display_handle, CurrentTime);
+                    XUngrabKeyboard(this->platform_window.display_handle, CurrentTime);
+                }
+
+                // Save grab state.
+                this->platform_window.grab_input = grab_input;
+            #elif defined(_WIN32)
+                if (grab_input) {
+                    SetCapture(this->platform_window.window_handle);
+                }
+                else {
+                    ReleaseCapture();
+                }
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(grab_input);
+                return;
+
+            #endif
+        }
+
+    public:
+        std::pair<int, int> get_position() const  {
+            if (!this->is_open()) return { 0, 0 };
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                XWindowAttributes window_attributes;
+                XGetWindowAttributes(this->platform_window.display_handle, this->platform_window.window_handle, &window_attributes);
+                return { window_attributes.x, window_attributes.y };
+            #elif defined(_WIN32)
+                RECT window_rect = {};
+                GetWindowRect(this->platform_window.window_handle, &window_rect);
+                return { window_rect.left, window_rect.top };
+            #elif defined(__APPLE__)
+
+                return { 0, 0 };
+
+            #else
+
+                return { 0, 0 };
+
+            #endif
+        }
+
+        void set_position(const std::pair<int, int>& position)  {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                XMoveWindow(this->platform_window.display_handle, this->platform_window.window_handle, position.first, position.second);
+            #elif defined(_WIN32)
+                std::pair<unsigned int, unsigned int> current_size = this->get_size();
+                MoveWindow(
+                    this->platform_window.window_handle,
+                    position.first,
+                    position.second,
+                    static_cast<int>(current_size.first),
+                    static_cast<int>(current_size.second),
+                    FALSE
+                );
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(position);
+                return;
+
+            #endif
+        }
+
+    public:
+        std::pair<unsigned int, unsigned int> get_size() const  {
+            if (!this->is_open()) return { 0, 0 };
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                XWindowAttributes window_attributes;
+                XGetWindowAttributes(this->platform_window.display_handle, this->platform_window.window_handle, &window_attributes);
+                return { window_attributes.width, window_attributes.height };
+            #elif defined(_WIN32)
+                RECT window_rect = {};
+                GetWindowRect(this->platform_window.window_handle, &window_rect);
+                return { window_rect.right - window_rect.left, window_rect.bottom - window_rect.top };
+            #elif defined(__APPLE__)
+
+                return { 0, 0 };
+
+            #else
+
+                return { 0, 0 };
+
+            #endif
+        }
+
+        void set_size(const std::pair<unsigned int, unsigned int>& size)  {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                XResizeWindow(this->platform_window.display_handle, this->platform_window.window_handle, size.first, size.second);
+            #elif defined(_WIN32)
+                std::pair<int, int> current_position = this->get_size();
+                MoveWindow(
+                    this->platform_window.window_handle,
+                    current_position.first,
+                    current_position.second,
+                    static_cast<int>(size.first),
+                    static_cast<int>(size.second),
+                    FALSE
+                );
+            #elif defined(__APPLE__)
+
+                return;
+
+            #else
+
+                static_cast<void>(size);
+                return;
+
+            #endif
+        }
+
+    public:
+        std::string get_title() const  {
+            if (!this->is_open()) return {};
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+
+                char* name;
+                XFetchName(this->platform_window.display_handle, this->platform_window.window_handle, &name);
+                std::string title(name);
+                XFree(name);
+                return title;
+
+            #elif defined(_WIN32)
+
+                int title_length = GetWindowTextLengthA(this->platform_window.window_handle) + 1;
+                std::vector<char> buffer(static_cast<unsigned int>(title_length));
+                GetWindowTextA(this->platform_window.window_handle, buffer.data(), title_length);
+                return std::string(buffer.begin(), buffer.end() - 1);
+
+            #elif defined(__APPLE__)
+
+                id titleString = msg<id(id, SEL)>::send(this->platform_window.window_handle, "title");
+                std::string title = msg<const char*(id, SEL)>::send(titleString, "UTF8String");
+                return title;
+
+            #else
+
+                return {};
+
+            #endif
+        }
+
+        void set_title(const std::string& new_title)  {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+
+                XStoreName(this->platform_window.display_handle, this->platform_window.window_handle, new_title.c_str());
+
+            #elif defined(_WIN32)
+
+                SetWindowTextA(this->platform_window.window_handle, new_title.c_str());
+
+            #elif defined(__APPLE__)
+
+                id titleString = msg<id(Class, SEL, const char*)>::send("NSString", "stringWithUTF8String:", new_title.c_str());
+                msg<void(id, SEL, id)>::send(this->platform_window.window_handle, "setTitle:", titleString);
+
+            #else
+
+                static_cast<void>(new_title);
+                return;
+
+            #endif
+        }
+
+    public:
+        std::pair<int, int> get_opengl_version() const  {
+            if (!this->is_open()) return { 0, 0 };
+
+            // Ensure this windows opengl context is current before using opengl functions.
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+                GTL_WINDOW_ASSERT(glXGetCurrentContext() == this->platform_window.opengl_context, "Ensure this windows opengl context is current before getting the opengl version.");
+            #elif defined(_WIN32)
+                GTL_WINDOW_ASSERT(wglGetCurrentContext() == this->platform_window.opengl_context, "Ensure this windows opengl context is current before getting the opengl version.");
+            #elif defined(__APPLE__)
+                // TODO
+            #endif
+
+            GLenum error = GL_NO_ERROR;
+            GLint major = 0;
+            GLint minor = 0;
+
+            glGetIntegerv(GL_MAJOR_VERSION, &major);
+            error = glGetError();
+            if (error) {
+                return { 0, 0 };
+            }
+
+            glGetIntegerv(GL_MINOR_VERSION, &minor);
+            error = glGetError();
+            if (error) {
+                return { 0, 0 };
+            }
+
+            return { major, minor };
+        }
+
+    public:
+        bool process(window::event_type& event)  {
+            if (!this->is_open()) return false;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+
+                XEvent x11_event = {};
+
+                auto is_window_event = [](Display*, XEvent* current_event, XPointer userData) -> Bool { return current_event->xany.window == reinterpret_cast<Window>(userData); };
+
+                // Check for events for this window.
+                while (XCheckIfEvent(const_cast<Display*>(this->platform_window.display_handle), &x11_event, is_window_event, reinterpret_cast<XPointer>(this->platform_window.window_handle)) != 0) {
+                    
+                    // Check if this event should be filtered out.
+                    if (XFilterEvent(&x11_event, this->platform_window.window_handle) == True) {
+                        continue;
+                    }
+
+                    // Process event type.
+                    switch (x11_event.type) {
+                        // Check for exit event.
+                        case ClientMessage: {
+                            if ((x11_event.xclient.format == 32) && (x11_event.xclient.data.l[0] == static_cast<long>(this->platform_window.close_handler))) {
+                                this->close();
+                                return false;
+                            }
+                        } break;
+
+                        // Check for keyboard remapping.
+                        case MappingNotify: {
+                            XRefreshKeyboardMapping(&x11_event.xmapping);
+                            continue;
+                        } //break;
+
+                        // Configuration events.
+
+                        case ConfigureNotify: {
+                            event.input = event_type::input_type::configuration;
+                            event.data.configuration = event_type::configuration_type{ x11_event.xconfigure.x, x11_event.xconfigure.y, x11_event.xconfigure.width, x11_event.xconfigure.height };
+                            return true;
+                        } //break;
+
+                        // Focus change events.
+
+                        case FocusIn: {
+                            event.input = event_type::input_type::focus;
+                            event.data.focus = event_type::focus_type::gained;
+                            return true;
+                        } //break;
+
+                        case FocusOut: {
+                            event.input = event_type::input_type::focus;
+                            event.data.focus = event_type::focus_type::lost;
+                            return true;
+                        } //break;
+
+                        // Keboard events.
+
+                        case KeyPress: {
+                            event.input = event_type::input_type::key_press;
+                            char buffer[32];
+                            XLookupString(const_cast<XKeyEvent*>(&x11_event.xkey), buffer, sizeof(buffer), reinterpret_cast<KeySym*>(&event.data.key), nullptr);
+                            return true;
+                        } //break;
+
+                        case KeyRelease: {
+                            event.input = event_type::input_type::key_release;
+                            char buffer[32];
+                            XLookupString(const_cast<XKeyEvent*>(&x11_event.xkey), buffer, sizeof(buffer), reinterpret_cast<KeySym*>(&event.data.key), nullptr);
+                            return true;
+                        } //break;
+
+                        // Mouse events.
+
+                        case ButtonPress:
+                        case ButtonRelease: {
+                            if (x11_event.xbutton.button == Button4) {
+                                event.input = event_type::input_type::mouse_scroll;
+                                event.data.scroll = 1;
+                                return true;
+                            }
+                            else if (x11_event.xbutton.button == Button5) {
+                                event.input = event_type::input_type::mouse_scroll;
+                                event.data.scroll = -1;
+                                return true;
+                            }
+
+                            event.input = (x11_event.type == ButtonPress) ? event_type::input_type::mouse_press : event_type::input_type::mouse_release;
+                            
+                            switch (x11_event.xbutton.button) {
+                                case Button1: event.data.mouse = event_type::mouse_type::left;            break;
+                                case Button2: event.data.mouse = event_type::mouse_type::middle;          break;
+                                case Button3: event.data.mouse = event_type::mouse_type::right;           break;
+                                default:      event.data.mouse = event_type::mouse_type::unknown;         break;
+                            }
+                            return true;
+                        } //break;
+
+                        case MotionNotify: {
+                            event.input = event_type::input_type::mouse_move;
+                            event.data.motion.x = x11_event.xmotion.x;
+                            event.data.motion.y = x11_event.xmotion.y;
+                            return true;
+                        } //break;
+                    }
+                }
+
+                // We only get here if there were no events to process.
+                return false;
+
+            #elif defined(_WIN32)
+
+                MSG windows_event = {};
+
+                // Check for events for this window.
+                while (PeekMessageA(&windows_event, this->platform_window.window_handle, 0, 0, PM_REMOVE) != 0) {
+                    // If there was an event, it is dispatched to the window callback.
+                    // In this case it is the gtl::window::platform_window::callback() function.
+                    DispatchMessageA(&windows_event);
+                }
+
+                // The window callback for this class stores all events in a queue so they can be read here.
+                // This is done using a queue as windows does not pass all messages to PeekMessage().
+                // So we can't just re post messages using PostMessage() in the window callback, as they'd never arrive.
+                while (!this->platform_window.windows_messages.empty()) {
+                    // Be aware some messages store pointers to structures, these will be invalid here.
+                    windows_event.hwnd = this->platform_window.window_handle;
+                    windows_event.message = this->platform_window.windows_messages.front().message;
+                    windows_event.wParam = this->platform_window.windows_messages.front().word_param;
+                    windows_event.lParam = this->platform_window.windows_messages.front().long_param;
+                    this->platform_window.windows_messages.pop_front();
+
+                    // React to events.
+                    switch (windows_event.message) {
+
+                        // Check for exit.
+                        case WM_NCDESTROY:
+                        case WM_DESTROY:
+                        case WM_ENDSESSION:
+                        case WM_CLOSE: {
+                            this->close();
+                            return false;
+                        }
+
+                        // Configuration events.
+
+                        case WM_EXITSIZEMOVE: {
+                            RECT window_rect = {};
+                            GetWindowRect(this->platform_window.window_handle, &window_rect);
+                            event.input = event_type::input_type::configuration;
+                            event.data.configuration = event_type::configuration_type{ window_rect.left, window_rect.top, window_rect.right - window_rect.left, window_rect.bottom - window_rect.top };
+                            return true;
+                        } break;
+
+                        // Focus change events.
+
+                        case WM_SETFOCUS: {
+                            event.input = event_type::input_type::focus;
+                            event.data.focus = event_type::focus_type::gained;
+                            return true;
+                        } break;
+
+                        case WM_KILLFOCUS: {
+                            event.input = event_type::input_type::focus;
+                            event.data.focus = event_type::focus_type::lost;
+                            return true;
+                        } break;
+
+                        // Keboard events.
+
+                        case WM_SYSKEYDOWN:
+                        case WM_KEYDOWN: {
+                            // Only emit key presses once.
+                            bool previous_state_down = (windows_event.lParam & (0x01 << 30)) > 0;
+                            if (previous_state_down) {
+                                continue;
+                            }
+
+                            //VirtualKeyCode = (windows_event.wParam & 0xFF);
+                            //unsigned short RepeatCount = windows_event.lParam & 0xFFFF;
+                            //unsigned char ScanCode = (windows_event.lParam >> 16) & 0xFF;
+                            //bool IsExtendedKey = ((windows_event.lParam >> 24) & 1) > 0;
+                            //bool PreviousStateDown = ((windows_event.lParam >> 30) & 1) > 0;
+
+                            event.input = event_type::input_type::key_press;
+                            event.data.key = (windows_event.wParam & 0xFF);
+                            return true;
+                        } break;
+
+                        case WM_SYSKEYUP: 
+                        case WM_KEYUP: {
+                            //VirtualKeyCode = (windows_event.wParam & 0xFF);
+                            //unsigned short RepeatCount = windows_event.lParam & 0xFFFF;
+                            //unsigned char ScanCode = (windows_event.lParam >> 16) & 0xFF;
+                            //bool IsExtendedKey = ((windows_event.lParam >> 24) & 1) > 0;
+                            //bool PreviousStateDown = ((windows_event.lParam >> 30) & 1) > 0;
+
+                            event.input = event_type::input_type::key_release;
+                            event.data.key = (windows_event.wParam & 0xFF);
+                            return true;
+                        } break;
+
+                        // Mouse events.
+                        case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+                        case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK:
+                        case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK: {
+                            event.input = (windows_event.message == WM_LBUTTONUP || windows_event.message == WM_MBUTTONUP || windows_event.message == WM_RBUTTONUP) ? event_type::input_type::mouse_release : event_type::input_type::mouse_press;
+                            switch (windows_event.message) {
+                                case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK: event.data.mouse = event_type::mouse_type::left;    break;
+                                case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK: event.data.mouse = event_type::mouse_type::middle;  break;
+                                case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK: event.data.mouse = event_type::mouse_type::right;   break;
+                                default:                                                       event.data.mouse = event_type::mouse_type::unknown; break;
+                            }
+                            return true;
+                        } break;
+
+                        case WM_MOUSEWHEEL: {
+                            event.input = event_type::input_type::mouse_scroll;
+                            event.data.scroll = GET_WHEEL_DELTA_WPARAM(windows_event.wParam);
+                            return true;
+                        } break;
+
+                        case WM_MOUSEMOVE: {
+                            event.input = event_type::input_type::mouse_move;
+                            event.data.motion.x = static_cast<int>(static_cast<short>(LOWORD(windows_event.lParam)));
+                            event.data.motion.y = static_cast<int>(static_cast<short>(HIWORD(windows_event.lParam)));
+                            return true;
+                        } break;
+                    }
+                }
+
+                // We only get here if there were no events to process.
+                return false;
+
+            #elif defined(__APPLE__)
+
+                // Poll for events.
+                // There is no way to get events on a per windows basis on osx.
+                // Therefore we store all events in the application, then process the list per window.
+                for(;;) {
+                    // Get the next event.
+                    // NSEvent* osx_event = [NSApp nextEventMatchingMask:NSAnyEventMask untilDate:[NSDate distantPast] inMode:NSDefaultRunLoopMode dequeue:YES];
+                    id distant_past = msg<id(Class, SEL)>::send("NSDate", "distantPast");
+                    id osx_event = msg<id(id, SEL, NSUInteger, id, id, BOOL)>::send(this->platform_window.window_handle, "nextEventMatchingMask:untilDate:inMode:dequeue:", NSUIntegerMax, distant_past, NSDefaultRunLoopMode, YES);
+
+                    // If there are no more events break out of the polling loop.
+                    if (!osx_event) {
+                        break;
+                    }
+
+                    // Get the target window for the event.
+                    id osx_event_window_handle = msg<id(id, SEL)>::send(osx_event, "window");
+
+                    // Get the event type.
+                    NSUInteger osx_event_type = msg<NSUInteger(id, SEL)>::send(osx_event, "type");
+
+                    // Extract the event information.
+                    switch (osx_event_type) {
+
+                    }
+
+                    // If the osx_event_window_handle is a nullptr send the event to all window_handles.
+                    static_cast<void>(osx_event_window_handle);
+                    //...
+
+                    // Add the event to the application wide event queue.
+                    //platform_window_type::application_type::add_event(osx_event_window_handle, event_type{});
+
+                    // Send the osx_event to the application for handling.
+                    // [NSApp sendEvent:osx_event];
+                    //msg<void(id, SEL, id)>::send(NSApp, "sendEvent:", osx_event);
+
+                    // [NSApp updateWindows];
+                    msg<void(id, SEL)>::send(NSApp, "updateWindows");
+                }
+
+                // Try and get an event for this window.
+                return platform_window_type::application_type::get_event(this->platform_window.window_handle, event);
+
+#if 0
+                switch(eventType)
+                {
+                    case 5:  // NSMouseMoved
+                    case 6:  // NSLeftMouseDragged
+                    case 7:  // NSRightMouseDragged
+                    case 27: // NSOtherMouseDragged
+                    {
+                        //NSWindow * currentWindow = [NSApp keyWindow];
+                        id currentWindow = ((id (*)(id, SEL))objc_msgSend)(NSApp, sel_registerName("keyWindow"));
+
+                        //CGRect adjustFrame = [[currentWindow contentView] frame];
+                        id currentWindowContentView = ((id (*)(id, SEL))objc_msgSend)(currentWindow, sel_registerName("contentView"));
+                        CGRect adjustFrame = ((CGRect (*)(id, SEL))abi_objc_msgSend_stret)(currentWindowContentView, sel_registerName("frame"));
+
+                        //CGPoint p = [currentWindow mouseLocationOutsideOfEventStream];
+                        // CGPoint is small enough to fit a register, so no need for objc_msgSend_stret
+                        CGPoint p = ((CGPoint (*)(id, SEL))objc_msgSend)(currentWindow, sel_registerName("mouseLocationOutsideOfEventStream"));
+
+                        // map input to content view rect
+                        if(p.x < 0) p.x = 0;
+                        else if(p.x > adjustFrame.size.width) p.x = adjustFrame.size.width;
+                        if(p.y < 0) p.y = 0;
+                        else if(p.y > adjustFrame.size.height) p.y = adjustFrame.size.height;
+
+                        // map input to pixels
+                        CGRect r = {{ p.x, p.y} , { 0, 0 }};
+                        //r = [currentWindowContentView convertRectToBacking:r];
+                        r = ((CGRect (*)(id, SEL, CGRect))abi_objc_msgSend_stret)(currentWindowContentView, sel_registerName("convertRectToBacking:"), r);
+                        p = r.origin;
+
+                        //printf("mouse moved to %f %f\n", p.x, p.y);
+                        break;
+                    }
+
+                    case 1:  // NSLeftMouseDown
+                    case 3:  // NSRightMouseDown
+                    case 25: // NSOtherMouseDown
+                    {
+                        // 0 = left, 1 = right, 0 = middle.
+                        //NSInteger number = [osx_event buttonNumber];
+                        NSInteger number = ((NSInteger (*)(id, SEL))objc_msgSend)(osx_event, sel_registerName("buttonNumber"));
+                        printf("mouse other key down : %i\n", (int)number);
+                        break;
+                    }
+
+                    case 2:  // NSLeftMouseUp
+                    case 4:  // NSRightMouseUp
+                    case 26: // NSOtherMouseUp
+                    {
+                        // 0 = left, 1 = right, 0 = middle.
+                        //NSInteger number = [osx_event buttonNumber];
+                        NSInteger number = ((NSInteger (*)(id, SEL))objc_msgSend)(osx_event, sel_registerName("buttonNumber"));
+                        printf("mouse other key up : %i\n", (int)number);
+                        break;
+                    }
+
+                    case 22: // NSScrollWheel
+                    {
+                        //CGFloat deltaX = [osx_event scrollingDeltaX];
+                        CGFloat deltaX = ((CGFloat (*)(id, SEL))abi_objc_msgSend_fpret)(osx_event, sel_registerName("scrollingDeltaX"));
+
+                        //CGFloat deltaY = [osx_event scrollingDeltaY];
+                        CGFloat deltaY = ((CGFloat (*)(id, SEL))abi_objc_msgSend_fpret)(osx_event, sel_registerName("scrollingDeltaY"));
+
+                        //BOOL precisionScrolling = [osx_event hasPreciseScrollingDeltas];
+                        BOOL precisionScrolling = ((BOOL (*)(id, SEL))objc_msgSend)(osx_event, sel_registerName("hasPreciseScrollingDeltas"));
+
+                        if(precisionScrolling)
+                        {
+                            deltaX *= 0.1f; // similar to glfw
+                            deltaY *= 0.1f;
+                        }
+
+                        if(fabs(deltaX) > 0.0f || fabs(deltaY) > 0.0f)
+                            printf("mouse scroll wheel delta %f %f\n", deltaX, deltaY);
+                        break;
+                    }
+
+                    case 12: // NSFlagsChanged
+                    {
+                        //NSEventModifierFlags modifiers = [osx_event modifierFlags];
+                        NSUInteger modifiers = ((NSUInteger (*)(id, SEL))objc_msgSend)(osx_event, sel_registerName("modifierFlags"));
+
+                        // based on NSEventModifierFlags
+                        struct
+                        {
+                            union
+                            {
+                                struct
+                                {
+                                    uint8_t alpha_shift:1;
+                                    uint8_t shift:1;
+                                    uint8_t control:1;
+                                    uint8_t alternate:1;
+                                    uint8_t command:1;
+                                    uint8_t numeric_pad:1;
+                                    uint8_t help:1;
+                                    uint8_t function:1;
+                                };
+                                uint8_t mask;
+                            };
+                        } keys;
+
+                        //keys.mask = (modifiers & NSDeviceIndependentModifierFlagsMask) >> 16;
+                        keys.mask = (modifiers & 0xffff0000UL) >> 16;
+
+                        printf("mod keys : mask %03u state %u%u%u%u%u%u%u%u\n", keys.mask, keys.alpha_shift, keys.shift, keys.control, keys.alternate, keys.command, keys.numeric_pad, keys.help, keys.function);
+                        break;
+                    }
+
+                    case 10: // NSKeyDown
+                    {
+                        //NSString * inputText = [osx_event characters];
+                        id inputText = ((id (*)(id, SEL))objc_msgSend)(osx_event, sel_registerName("characters"));
+
+                        //const char * inputTextUTF8 = [inputText UTF8String];
+                        const char * inputTextUTF8 = ((const char* (*)(id, SEL))objc_msgSend)(inputText, sel_registerName("UTF8String"));
+
+                        //you can get list of virtual key codes from Carbon HIToolbox/Events.h
+                        //uint16_t keyCode = [osx_event keyCode];
+                        uint16_t keyCode = ((unsigned short (*)(id, SEL))objc_msgSend)(osx_event, sel_registerName("keyCode"));
+
+                        printf("key down %u, text '%s'\n", keyCode, inputTextUTF8);
+                        break;
+                    }
+
+                    case 11: // NSKeyUp
+                    {
+                        //uint16_t keyCode = [osx_event keyCode];
+                        uint16_t keyCode = ((unsigned short (*)(id, SEL))objc_msgSend)(osx_event, sel_registerName("keyCode"));
+
+                        printf("key up %u\n", keyCode);
+                        break;
+                    }
+
+                    default:
+                    {
+                        printf("window: %p event: %d\n", (void*)windowID, (int)eventType);
+                        break;
+                    }
+                }
+#endif
+
+            #else
+
+                return false;
+
+            #endif
+        }
+
+        void prepare() {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+
+                if (glXGetCurrentContext() != this->platform_window.opengl_context) {
+                    glXMakeCurrent(this->platform_window.display_handle, this->platform_window.window_handle, this->platform_window.opengl_context);
+                }
+
+            #elif defined(_WIN32)
+
+                if (wglGetCurrentContext() != this->platform_window.opengl_context) {
+                    wglMakeCurrent(this->platform_window.device_context, this->platform_window.opengl_context);
+                }
+
+            #elif defined(__APPLE__)
+
+                //[openGLContext update]; // probably we only need to do it when we resize the window
+                msg<void(id, SEL)>::send(this->platform_window.openGLContext, "update");
+
+                //[openGLContext makeCurrentContext];
+                msg<void(id, SEL)>::send(this->platform_window.openGLContext, "makeCurrentContext");
+
+                // TODO: This should be somewhere else.
+                /*get size of screen*/ {
+                    //CGRect rect = [contentView frame];
+                    CGRect rect = msg<CGRect(id, SEL)>::send(this->platform_window.contentView, "frame");
+
+                    //rect = [contentView convertRectToBacking:rect];
+                    rect = msg<CGRect(id, SEL, CGRect)>::send(this->platform_window.contentView, "convertRectToBacking:", rect);
+
+                    glViewport(0, 0, static_cast<GLsizei>(rect.size.width), static_cast<GLsizei>(rect.size.height));
+                }
+
+            #else
+
+                return;
+
+            #endif
+        }
+
+        void present() {
+            if (!this->is_open()) return;
+
+            #if defined(linux) || defined(__linux) || defined(__linux__)
+
+                XFlush(this->platform_window.display_handle);
+                glXSwapBuffers(this->platform_window.display_handle, this->platform_window.window_handle);
+
+            #elif defined(_WIN32)
+
+                SwapBuffers(this->platform_window.device_context);
+
+            #elif defined(__APPLE__)
+                
+                //[openGLContext flushBuffer];
+                msg<void(id, SEL)>::send(this->platform_window.openGLContext, "flushBuffer");
+
+            #else
+
+                return;
+
+            #endif
+        }
+    };
+}
+
+#endif // GTL_IO_WINDOW_HPP

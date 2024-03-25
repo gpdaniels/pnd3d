@@ -1,3 +1,23 @@
+# Major Changes of this Refactor
+
+- Replaced window code with a platform generic version.
+- Changed the default application to a stress test that adds/removes loads of voxels.
+- Fixed loads of compiler warnings.
+- Fixed a fair few issues spotted by the many compiler sanitisers.
+- Removed message box logging, replaced with printfs.
+- Got the code to build for 64 bit platforms.
+- Removed bilinear filtering / polygon drawing / image loading code.
+- Added C++ versions all needed ASM functions.
+- Split apart files as much as possible.
+- Fixed some issues with the GLSL code for non-textured rendering.
+- Removed texturing support, only single colour per voxel supported.
+- Fall back to single threaded on platforms other than windows.
+- Removed all of the marching cubes sections.
+- Removed loads of unneeded / not-running code.
+- Got code building on a modern version of visual studio.
+
+---
+
 # Archived Original Release Information
 
 >  Amalgamated from the original pnd3d readme and Ken Silverman's website: http://advsys.net/ken/voxlap/pnd3d.htm
